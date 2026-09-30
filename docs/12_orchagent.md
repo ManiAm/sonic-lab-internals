@@ -133,12 +133,7 @@ sai_status_t status = sai_route_api->create_route_entry(&route_entry, 1, &attr);
 
 These calls do not reach the ASIC directly. The **sairedis** library serializes each SAI call into a Redis entry in ASIC_DB. The syncd process in the SYNCD container reads those entries and executes the actual vendor SDK calls against the hardware.
 
-Orchagent supports two modes for SAI calls:
-
-- **Asynchronous mode** (default): The call returns as soon as the message is queued in ASIC_DB. This is faster, but hardware errors are detected only later via notifications.
-- **Synchronous mode**: The call blocks until syncd processes it and returns a status code. This is slower, but orchagent can react to errors immediately — retrying, ignoring, or alerting as appropriate.
-
-The mode is set at startup and cannot be changed at runtime. For the full details on sairedis serialization, syncd processing, and error handling, see [SAI and the Syncd Container](13_sai_and_syncd.md).
+> For the full details on sairedis serialization, syncd processing, and error handling, see [SAI and the Syncd Container](13_sai_and_syncd.md).
 
 ## The Notification Thread
 
