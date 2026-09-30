@@ -113,7 +113,9 @@ These are typically caught at the meta layer — the call never reached the ASIC
 
 ### Async vs. Sync Mode
 
-After the meta layer validates the call and sairedis writes it to ASIC_DB, the `waitForResponse` step determines how orchagent handles the result. The mode is set at startup and cannot be changed at runtime.
+After the meta layer validates the call and sairedis writes it to ASIC_DB, the `waitForResponse` step determines how orchagent handles the result.
+
+> The mode is set at startup and cannot be changed at runtime.
 
 #### Asynchronous Mode (Default)
 
@@ -198,37 +200,6 @@ while (true)
 > **Note**: Beyond the four basic operations shown above, syncd also handles bulk operations (`BULK_CREATE`, `BULK_REMOVE`, `BULK_SET`), FDB flush, stats queries, and capability queries — all through the same dispatch mechanism.
 
 An important detail: **syncd does not have special-case code per object type**. It uses the SAI metadata (`sai_metadata_get_object_type_info()`) to generically look up the correct function pointer for any object type. Whether the object is a route, a next-hop, or an ACL entry, the same code path handles deserialization, VID translation, and vendor SAI dispatch.
-
-### Notification Path (Hardware → Software)
-
-Syncd also acts as a **publisher**, forwarding hardware events to orchagent:
-
-```
-orchagent notification thread consumes the event
-    ^
-    │
-NotificationProducer → publishes to ASIC_DB notification channel
-    ^
-    │
-syncd notification handler
-    ^
-    │
-Vendor SDK fires callback into syncd
-    ^
-    │
-ASIC detects event (e.g., link down)
-```
-
-The main event types syncd publishes:
-
-| Event              | Description |
-|--------------------|-------------|
-| Port state change  | Link up/down from the optical/PHY layer |
-| FDB event          | MAC address learned or aged out |
-| Queue PFC deadlock | PFC watchdog detection |
-| BFD session state  | BFD up/down transition |
-
-For details on how orchagent processes these notifications, see [The Notification Thread](12_orchagent.md#the-notification-thread).
 
 -----
 

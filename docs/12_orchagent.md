@@ -139,11 +139,30 @@ These calls do not reach the ASIC directly. The **sairedis** library serializes 
 
 Orchagent has a **dedicated notification thread** (separate from the main select loop) that handles asynchronous notifications from syncd:
 
-- Port state changes (link up/down)
-- FDB events (MAC learned/aged)
-- BFD session state changes
+| Event              | Description |
+|--------------------|-------------|
+| Port state change  | Link up/down from the optical/PHY layer |
+| FDB event          | MAC address learned or aged out |
+| Queue PFC deadlock | PFC watchdog detection |
+| BFD session state  | BFD up/down transition |
 
 These arrive via [NotificationConsumer](10_ipc_mechanisms.md#pattern-2-notificationconsumer--notificationproducer) and are processed in a separate thread to avoid blocking the main orchestration loop.
+
+```
+orchagent notification thread consumes the event
+    ^
+    │
+NotificationProducer → publishes to ASIC_DB notification channel
+    ^
+    │
+syncd notification handler
+    ^
+    │
+Vendor SDK fires callback into syncd
+    ^
+    │
+ASIC detects event (e.g., link down)
+```
 
 ## The Orch Catalog
 
