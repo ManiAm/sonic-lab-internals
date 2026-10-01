@@ -72,6 +72,8 @@ graph TD
 
         subgraph syncd_container["syncd container"]
             syncd["syncd"]
+            vendor_sai["Vendor SAI<br/>(libsai)"]
+            vendor_sdk["Vendor SDK"]
         end
 
         asic[/"ASIC"/]
@@ -83,7 +85,9 @@ graph TD
         appl_db --> orchagent
         orchagent -- "SAI objects" --> asic_db
         asic_db --> syncd
-        syncd -- "Vendor SDK" --> asic
+        syncd --> vendor_sai
+        vendor_sai --> vendor_sdk
+        vendor_sdk --> asic
     end
 ```
 
@@ -218,4 +222,4 @@ SONiC cannot use the standard off-the-shelf FRR because it needs custom integrat
 
 ---
 
-**Previous**: [← SAI and Syncd](13_sai_and_syncd.md) · **Next**: [Configuration Management →](15_configuration_management.md)
+**Previous**: [← SAI and Syncd](13_sai_and_syncd.md) · **Next**: [The BGP Route-Download Benchmark →](15_benchmark.md)

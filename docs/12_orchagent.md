@@ -135,6 +135,48 @@ These calls do not reach the ASIC directly. The **sairedis** library serializes 
 
 > For the full details on sairedis serialization, syncd processing, and error handling, see [SAI and the Syncd Container](13_sai_and_syncd.md).
 
+## Batch Processing and EntityBulker
+
+The individual SAI call shown above works correctly for a single route, but it becomes a bottleneck when thousands of routes arrive at once — after a BGP session comes up or a reboot. Calling `create_route_entry()` one at a time means each route incurs the full cost of sairedis serialization, ASIC_DB write, syncd processing, and hardware programming before the next route begins. At scale, this per-route overhead dominates total convergence time.
+
+Orchagent addresses this with two layers of batching: a **pop batch** that controls how many entries it reads from APPL_DB in one pass, and an **EntityBulker** that collects the resulting SAI operations and issues them as bulk hardware calls.
+
+### The Pop Batch (`-b` Flag)
+
+When the main select loop wakes orchagent, each Orch's Consumer calls `pops()` to drain pending entries from its APPL_DB queue. The `-b` flag (passed on the orchagent command line) sets the maximum number of entries drained per call. The default in SONiC is **1,024**:
+
+```text
+/usr/bin/orchagent -d /var/log/swss -b 1024 -s
+```
+
+This means `RouteOrch::doTask()` receives up to 1,024 routes in a single invocation. Without this flag, the consumer would drain entries one at a time (or at the `DEFAULT_POP_BATCH_SIZE` of 128 defined in [ConsumerStateTable](10_ipc_mechanisms.md#pattern-4-producerstatetable--consumerstatetable-hash-based)).
+
+### EntityBulker — Deferring SAI Calls
+
+Inside `doTask()`, orchagent does not call SAI immediately for each route. Instead, it collects the operations into an **EntityBulker** — a template class in the sairedis library that buffers SAI create, set, and remove operations until the batch is complete.
+
+The flow within a single `doTask()` invocation:
+
+1. **Iterate**: `RouteOrch::doTask()` loops through all 1,024 entries, calling `addRoute()` for each.
+
+2. **Defer**: Each `addRoute()` does not call `sai_route_api->create_route_entry()` directly. Instead, it pushes the operation into the `EntityBulker<sai_route_api_t>` buffer.
+
+3. **Flush**: After the loop completes, `EntityBulker::flush()` fires. It issues **bulk SAI calls** — `sai_bulk_create_route_entry()` — which sairedis serializes into `BULK_CREATE` entries on ASIC_DB. Syncd then executes these as a single vendor SDK call against the ASIC.
+
+This deferred-flush pattern means 1,024 routes produce a small number of bulk hardware calls instead of 1,024 individual ones. The reduction in per-route overhead is substantial: each bulk call amortizes the syncd processing, ASIC table lookup, and sync-mode acknowledgment across hundreds of routes.
+
+### The 1,000-Entry SAI Bulk Cap
+
+EntityBulker has its own internal limit: a maximum of **1,000 entries per SAI bulk call**. This cap is independent of the `-b` flag. When a `doTask()` processes 1,024 routes, `flush()` splits them into **two** bulk operations:
+
+- One bulk of **1,000** routes
+- One bulk of the remaining **24** routes
+
+The orchagent batch size (1,024, set by `-b`) and the SAI bulk size (1,000, set inside EntityBulker) are different numbers controlled at different layers. Increasing `-b` above 1,000 does not produce larger SAI bulk calls — it produces more of them per `doTask()` invocation.
+
+
+
+
 ## The Notification Thread
 
 Orchagent has a **dedicated notification thread** (separate from the main select loop) that handles asynchronous notifications from syncd:

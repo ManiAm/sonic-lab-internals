@@ -113,11 +113,17 @@ These are typically caught at the meta layer — the call never reached the ASIC
 
 ### Async vs. Sync Mode
 
-After the meta layer validates the call and sairedis writes it to ASIC_DB, the `waitForResponse` step determines how orchagent handles the result.
+After the meta layer validates the call and sairedis writes it to ASIC_DB, the `waitForResponse` step determines how orchagent handles the result. The mode is set at startup and cannot be changed at runtime.
 
-> The mode is set at startup and cannot be changed at runtime.
+#### Synchronous Mode (Default)
 
-#### Asynchronous Mode (Default)
+In sync mode (`orchagent -s`), orchagent's SAI call blocks until syncd processes it and returns a status code. If the vendor SAI call fails:
+
+- Syncd sends the `SAI_STATUS_*` error code back to orchagent via a `GETRESPONSE` message.
+- Orchagent decides what to do based on the specific error and object type (retry, ignore, or alert).
+- No crash is needed — the error is handled gracefully at the application layer.
+
+#### Asynchronous Mode
 
 In async mode, orchagent's SAI call returns `SAI_STATUS_SUCCESS` as soon as the request is queued in ASIC_DB — without waiting for syncd to process it. If the vendor SAI call subsequently fails in syncd:
 
@@ -126,13 +132,7 @@ In async mode, orchagent's SAI call returns `SAI_STATUS_SUCCESS` as soon as the 
 - This is a deliberate safety mechanism: an inconsistent state (where orchagent believes something is programmed but it is not) is more dangerous than a restart.
 - The crash triggers container restart, which re-initializes the ASIC to a known state.
 
-#### Synchronous Mode
-
-In sync mode, orchagent's SAI call blocks until syncd processes it and returns a status code. If the vendor SAI call fails:
-
-- Syncd sends the `SAI_STATUS_*` error code back to orchagent via a `GETRESPONSE` message.
-- Orchagent decides what to do based on the specific error and object type (retry, ignore, or alert).
-- No crash is needed — the error is handled gracefully at the application layer.
+> **History note.** SONiC originally defaulted to async mode. [PR #5735](https://github.com/sonic-net/sonic-buildimage/pull/5735) (Shi Su, Microsoft, merged October 29 2020) flipped the default to sync.
 
 -----
 

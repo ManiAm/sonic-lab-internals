@@ -27,7 +27,8 @@ Read in order — each document builds on the concepts from the previous ones.
 | 12 | [Orchagent Deep Dive](docs/12_orchagent.md) | Orch architecture, task queues, SAI interaction, sync vs async mode |
 | 13 | [SAI and Syncd](docs/13_sai_and_syncd.md) | Switch Abstraction Interface, meta layer, syncd processing, VID/RID |
 | 14 | [The BGP Container and FRR](docs/14_bgp_container.md) | FRRouting, zebra, fpmsyncd, route programming, RIB/FIB mapping, unified/split mode |
-| 15 | [Configuration Management](docs/15_configuration_management.md) | config_db.json, CLI, YANG validation, config save/load |
-| 16 | [Reboot Types and Config Reload](docs/16_reboot_and_reload.md) | Cold, fast, warm reboot comparison; config reload internals |
-| 17 | [State Interactions](docs/17_state_interactions.md) | End-to-end data flows for routing, port events, VLAN, ARP |
-| 18 | [Troubleshooting](docs/18_troubleshooting.md) | Debugging techniques for common SONiC problems |
+| 15 | [The BGP Route-Download Benchmark](docs/15_benchmark.md) | Measuring route programming rate end-to-end, pipeline stages, tooling, and measured results |
+| 16 | [Configuration Management](docs/16_configuration_management.md) | config_db.json, CLI, YANG validation, config save/load |
+| 17 | [Reboot Types and Config Reload](docs/17_reboot_and_reload.md) | Cold, fast, warm reboot comparison; config reload internals |
+| 18 | [State Interactions](docs/18_state_interactions.md) | End-to-end data flows for routing, port events, VLAN, ARP |
+| 19 | [Troubleshooting](docs/19_troubleshooting.md) | Debugging techniques for common SONiC problems |

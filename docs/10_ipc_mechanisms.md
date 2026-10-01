@@ -263,7 +263,7 @@ sequenceDiagram
     end
 ```
 
-**Used for**: Communication from application daemons — both manager daemons (e.g., `portmgrd`, `intfmgrd`) and sync daemons (e.g., `fpmsyncd`, `neighsyncd`) — to APPL_DB, where orchagent consumes the updates.
+**Used for**: Communication from application daemons — both manager daemons and sync daemons — to APPL_DB, where orchagent consumes the updates.
 
 **Key details**:
 - Uses a Redis **SET** for tracking changed keys and Redis **HASHes** for staging data, rather than a list. Each table has its own distinctly named key set and temp hashes.
