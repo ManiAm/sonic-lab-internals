@@ -26,11 +26,15 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName)
 
 ### 2. Consumer Abstraction
 
-The Orch base class wraps the IPC mechanism into a **Consumer** object. The Consumer handles all Redis interaction details — connecting, subscribing, reading data, and deserializing. Each Orch receives a clean `(key, operation, field-value pairs)` tuple.
+The Orch base class wraps the IPC mechanism into a **Consumer** object. The Consumer handles all Redis interaction details — connecting, subscribing, reading data, and deserializing — so the Orch itself never deals with raw Redis commands.
 
 ### 3. Task Queue (m_toSync)
 
-When new messages arrive, the Consumer places them in a **task queue** called `m_toSync`. Each entry is a [`KeyOpFieldsValuesTuple`](10_ipc_mechanisms.md#the-common-message-format) — the same common tuple type returned by every IPC consumer in `swsscommon`. The queue itself is a `std::multimap<std::string, KeyOpFieldsValuesTuple>`, keyed by the table entry key. A multimap (rather than a plain map) is used so that multiple operations on the same key can coexist — for example, a `DEL` followed by a `SET` on the same route. Each tuple contains:
+When new messages arrive, the Consumer places them in a **task queue** called `m_toSync`. Each entry is a [`KeyOpFieldsValuesTuple`](10_ipc_mechanisms.md#the-common-message-format) — the common message format shared by every IPC consumer in `swsscommon`.
+
+The queue is a `std::multimap<std::string, KeyOpFieldsValuesTuple>`, keyed by the table entry key. A multimap (rather than a plain map) allows multiple operations on the same key to coexist — for example, a `DEL` followed by a `SET` on the same route.
+
+Each tuple contains three fields:
 
 - **Key**: The table entry key (e.g., `10.0.0.0/24` for a route)
 - **Operation**: `SET` (create/update) or `DEL` (delete)
@@ -174,9 +178,6 @@ EntityBulker has its own internal limit: a maximum of **1,000 entries per SAI bu
 
 The orchagent batch size (1,024, set by `-b`) and the SAI bulk size (1,000, set inside EntityBulker) are different numbers controlled at different layers. Increasing `-b` above 1,000 does not produce larger SAI bulk calls — it produces more of them per `doTask()` invocation.
 
-
-
-
 ## The Notification Thread
 
 Orchagent has a **dedicated notification thread** (separate from the main select loop) that handles asynchronous notifications from syncd:
@@ -205,6 +206,86 @@ Vendor SDK fires callback into syncd
     │
 ASIC detects event (e.g., link down)
 ```
+
+## CRM — Critical Resource Monitoring
+
+CRM is SONiC's built-in system for tracking **ASIC table usage** — how many entries of each resource type are currently occupied and how many remain available. It is not a Linux kernel feature and not an ASIC-vendor feature; it is a SONiC-layer abstraction implemented as `CrmOrch`, a module inside orchagent.
+
+### How CrmOrch Differs from Other Orchs
+
+Most Orchs are **event-driven**: they wake when data arrives in their subscribed table, process the entries, and go idle. CrmOrch is **timer-driven**: it wakes on a configurable polling interval (default **300 seconds**), queries the ASIC for current resource usage, and publishes the results — regardless of whether any configuration changed. It does subscribe to the CONFIG_DB `CRM` table for threshold and interval settings, but its primary work runs on a timer, not on database events.
+
+### The Data Flow
+
+```text
+CONFIG_DB                                     COUNTERS_DB
+  CRM table               ┌──────────┐         CRM:STATS keys
+  (polling interval,  ──► │ CrmOrch  │ ──►     (used / available
+   threshold config)      │ (timer)  │          per resource type)
+                          └────┬─────┘
+                               │
+                               ▼
+                           SAI API
+                     sai_object_type_
+                     get_availability()
+```
+
+1. **Configuration.** An operator sets the polling interval and optional thresholds in CONFIG_DB — for example, `sudo crm config polling interval 1` changes the timer from 300 s to 1 s. CrmOrch reads these values on startup and updates them whenever the CONFIG_DB `CRM` table changes.
+
+2. **Polling — two counters, two sources.** The two columns in CRM output come from different places:
+
+    - **Available count** — read from the ASIC via standard SAI switch attributes (e.g., `SAI_SWITCH_ATTR_AVAILABLE_IPV4_ROUTE_ENTRY`). Every vendor SAI must implement these; the vendor library queries actual hardware table occupancy. These are lightweight, read-only queries that do not interfere with forwarding.
+
+    - **Used count** — tracked in software by orchagent. Each Orch increments CRM's internal counter when it creates a SAI object and decrements it on removal. SAI defines `AVAILABLE` attributes but not `USED` attributes, because some ASIC-internal entries (default routes, SDK-created adjacencies) would skew the count. Software tracking keeps it consistent with what orchagent actually programmed.
+
+    In practice, `used + available ≈ total capacity` (e.g., `37 + 147,419 = 147,456` IPv4 route entries on the DX010), but exact equality is not guaranteed since the two numbers come from different sources.
+
+3. **Publishing.** CrmOrch writes both counters to COUNTERS_DB under `CRM:STATS` keys. The `crm` CLI tool (a Python script in the `sonic-utilities` package) reads these keys and formats the output:
+
+    ```text
+    admin@sonic:~$ crm show resources all
+
+    Resource Name           Used Count    Available Count
+    --------------------  ------------  -----------------
+    ipv4_route                      37             147419
+    ipv6_route                       3              16381
+    ipv4_nexthop                     1              32765
+    ipv6_nexthop                     0              32765
+    ipv4_neighbor                    1               8191
+    ipv6_neighbor                    0               4095
+    nexthop_group_member             0              16384
+    nexthop_group                    0                256
+    fdb_entry                        0               8191
+    ipmc_entry                       0               4096
+    snat_entry                       0               1024
+    dnat_entry                       0               1024
+    ```
+
+4. **Threshold alerts.** CRM can raise syslog warnings when a resource crosses a configured threshold. Thresholds can be defined as a percentage, an absolute used count, or an absolute free count, each with low and high watermarks. This is how operators detect that an ASIC table is approaching capacity before routes or neighbors start being silently dropped.
+
+### What CRM Tracks
+
+CRM monitors every major ASIC table type. The exact set of supported resources depends on the vendor SAI implementation — not every ASIC exposes every counter.
+
+| Resource category | Examples |
+|-------------------|------------------|
+| Forwarding tables | IPv4 routes, IPv6 routes |
+| Adjacencies       | IPv4 neighbors, IPv6 neighbors |
+| Next-hop groups   | ECMP groups and their members |
+| ACL resources     | ACL tables, ACL entries, ACL counters |
+| L2 tables         | FDB (MAC address) entries |
+| Multicast         | IPMC entries |
+| NAT               | SNAT entries, DNAT entries |
+
+### Why CRM Matters
+
+CRM answers a question that no other SONiC component does: **how full is the ASIC?** The software databases (APPL_DB, ASIC_DB) track *intent* — what should be programmed. CRM tracks *reality* — what the hardware actually holds. This distinction makes it essential for three purposes:
+
+- **Capacity planning** — detecting when you are approaching table limits before entries start being dropped.
+
+- **Benchmarking** — the [BGP route-download benchmark](../benchmark/README.md) uses CRM's IPv4 route counter as the hardware-verified measurement source, polling it twice per second to track programming progress in real time.
+
+- **Troubleshooting** — confirming that routes visible in software databases are actually present in hardware.
 
 ## The Orch Catalog
 
