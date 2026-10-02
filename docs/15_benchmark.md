@@ -19,7 +19,7 @@ This separation keeps protocol logic independent of any specific hardware, makes
 
 Two inter-process communication (IPC) hops around orchagent have the largest impact on pipeline speed:
 
-- **Northbound (fpmsyncd → orchagent):** fpmsyncd writes routes to APPL_DB, and orchagent drains them via Redis subscription in batches of up to 1,024 entries (the `-b` flag default). This is stock SONiC behavior. Platforms that switch this hop to ZMQ (a direct program-to-program pipe) with larger batch sizes reach higher rates on faster ASICs.
+- **Northbound (fpmsyncd → orchagent):** fpmsyncd writes routes to APPL_DB, and orchagent drains them via Redis subscription in batches of up to 1,024 entries (the `-b` flag default). This is the standard SONiC IPC path ([ProducerStateTable / ConsumerStateTable](10_ipc_mechanisms.md#pattern-4-producerstatetable--consumerstatetable-hash-based)).
 
 - **Southbound (orchagent → syncd):** orchagent does not write one route at a time to ASIC_DB. Instead, its EntityBulker collects SAI operations and flushes them in bulk. The bulk size is the `-k` flag; this platform omits it, so the default of 1,000 applies. It also runs synchronous mode (`-s`): after each bulk flush, orchagent blocks until syncd acknowledges the result, so programming errors surface immediately as return codes.
 
@@ -99,7 +99,7 @@ Orchagent's `ConsumerStateTable` receives a Redis notification that new routes a
 
 At the end of `doTask()`, `EntityBulker::flush()` fires. The sairedis library serializes the route operations into `BULK_CREATE` entries on ASIC_DB. This run used the stock command line (`-b 1024`, no `-k`), so the SAI bulk size stayed at its default of 1,000. Each 1,024-route orchagent batch therefore produced **two** ASIC_DB writes: one bulk of 1,000 routes and one bulk of the remaining 24.
 
-> Both numbers are orchagent options, at different layers. `-b` is how many APPL_DB entries one `doTask()` drains. `-k` is how many of those entries go into one SAI bulk call (default 1,000 when omitted). This measurement did not pass `-k`, so the 1,000 + 24 split is what the DX010 actually did. Raising `-k` would change that split. See [The SAI Bulk Size](12_orchagent.md#the-sai-bulk-size--k-flag).
+> Both numbers are orchagent options, at different layers. `-b` is how many APPL_DB entries one `doTask()` drains. `-k` is how many of those entries go into one SAI bulk call (default 1,000 when omitted). This measurement did not pass `-k`, so the 1,000 + 24 split is what the DX010 actually did. See [The SAI Bulk Size](12_orchagent.md#the-sai-bulk-size--k-flag).
 
 #### ASIC_DB → syncd
 
@@ -182,7 +182,7 @@ The benchmark measures how fast routes reach the ASIC, but the answer depends on
 
 <img src="../pics/benchmark.png" alt="segment" width="700">
 
-- **Download rate:** This measures the pipeline once it is flowing — pure throughput with the warm-up excluded. It is the higher number and the one most sensitive to tuning (batch size, sync mode, ASIC speed).
+- **Download rate:** This measures the pipeline once it is flowing — pure throughput with the warm-up excluded. It is the higher number and the one that directly reflects pipeline configuration and ASIC speed.
 
 ```text
 download rate = N / (t_last_route_in_asic − t_first_route_in_asic)
@@ -196,13 +196,13 @@ end-to-end rate = N / (t_last_route_in_asic − t_bgp_session_established)
 
 The gap between them is the **pipeline fill time**: how long the pipeline takes to prime before the first route lands in hardware. On the DX010 (the switch used throughout this document) it is roughly 3–4 seconds — negligible in a 100k run, but it would dominate a small 1k run. That is why download rate and E2E rate converge at large scale and diverge at small scale.
 
-**Which metric to report.** Always report both. The download rate isolates pipeline throughput and is the metric most sensitive to tuning changes. The E2E rate reflects operational convergence time — the interval an operator waits after a reboot or peering flap. Reporting one without identifying which it is makes the number ambiguous, and comparing a download rate from one benchmark against an E2E rate from another produces a misleading result.
+**Which metric to report.** Always report both. The download rate isolates pipeline throughput; the E2E rate reflects operational convergence time — the interval an operator waits after a reboot or peering flap. Reporting one without identifying which it is makes the number ambiguous, and comparing a download rate from one benchmark against an E2E rate from another produces a misleading result.
 
 ### Per-Stage Lag — Finding the Bottleneck
 
 Beyond the two headline rates, the benchmark should record **when each pipeline stage received its first and last route**. The difference between consecutive stages is the per-stage lag — a diagnostic metric that identifies exactly where time is spent.
 
-For example, if bgpd completes route ingestion in 4 seconds while the ASIC requires 148 seconds, the bottleneck lies downstream of bgpd. Per-stage lags narrow the diagnosis further: whether the delay originates in orchagent's batching, syncd's SAI calls, or the ASIC hardware itself. This directs tuning effort to the actual constraint rather than relying on assumptions.
+For example, if bgpd completes route ingestion in 4 seconds while the ASIC requires 148 seconds, the bottleneck lies downstream of bgpd. Per-stage lags narrow the diagnosis further: whether the delay originates in orchagent's batching, syncd's SAI calls, or the ASIC hardware itself. This identifies the actual constraint rather than relying on assumptions.
 
 ## RIB-IN Convergence — A Different Kind of Metric
 
@@ -272,7 +272,7 @@ The pipeline is concurrent: upstream stages continue flowing while downstream st
 
 - **Download vs E2E tells you where time goes.** Every run pays a roughly fixed ~4–5 s of pipeline fill (BGP processing, best-path selection, and database hops before the first route reaches hardware). At 100k that is amortized over a ~139–141 s programming window, so E2E (~687 r/s avg) sits close to the download rate (~718 r/s avg). At smaller scales the fill is a larger fraction of total time. The download rate isolates throughput; the E2E rate is what convergence actually feels like. Comparing two runs is only fair when the same metric is used.
 
-- **Quote the configuration with the number.** These ~680–720 r/s came from SONiC 202405's *default* profile (batch 1024, synchronous mode, standard Redis/FPM northbound path). The rate reflects the Broadcom SAI implementation on the DX010 — substantially slower than platforms with ZMQ northbound and larger batches (e.g., an NVIDIA SN5610 with batch 4096 and ZMQ reaches ~8,400 r/s). Default settings deliberately run the safer configuration, trading speed for error visibility; a number without its configuration is not comparable to anything.
+- **Quote the configuration with the number.** These ~680–720 r/s came from SONiC 202405's *default* profile (batch 1024, synchronous mode, standard Redis/FPM northbound path) on a Broadcom-based DX010. A different ASIC, a different SONiC version, or a different set of orchagent flags would produce a different number. A rate without its configuration is not comparable to anything.
 
 ## Why Run at Multiple Route Counts?
 
@@ -287,6 +287,79 @@ Repeating the same count (the 3 iterations) gives statistical confidence at one 
 - **The relevant number depends on the deployment's scale.** Convergence time is not linear in route count: fill is constant, programming is linear. A 10k-route fabric converges in fill-dominated time almost regardless of rate; a 100k fabric is rate-dominated. Measure at the scale you actually operate.
 
 From the data collected, the download rate declines mildly with scale — averaging ~742 r/s at 25k, ~718 r/s at 50k, and ~718 r/s at 100k — real but gentle table-pressure degradation, with no cliff even at 68% of table capacity (100k of ~147k). Total time scales linearly: 38 s → 74 s → 146 s (ratios of 1.94× and 1.97×), confirming a fixed-plus-linear model. The fixed pipeline-fill cost averages ~4–6 s, and the per-route cost is the reciprocal of the download rate (~1.4 ms per route).
+
+
+## Improving the Route-Download Rate
+
+The DX010 baseline measured above is a conservative starting point. SONiC exposes several configuration knobs that can increase this rate significantly. This section walks through each one, explains what it does, where it acts in the pipeline, and what trade-offs it introduces. Every improvement targets a specific stage; none of them change the BGP protocol processing upstream of fpmsyncd, because that stage completes in ~1–2 seconds and is never the bottleneck.
+
+### 1. Switch the Northbound IPC from Redis to ZMQ
+
+**What it is.** By default, fpmsyncd writes routes to APPL_DB using [ProducerStateTable](10_ipc_mechanisms.md#pattern-4-producerstatetable--consumerstatetable-hash-based), and orchagent reads them using `ConsumerStateTable`. Both sides go through Redis: the producer stages data in a Redis hash, publishes a notification on a Redis channel, and the consumer receives the notification and pops the data from Redis. Every route passes through Redis twice — once on the write side, once on the read side.
+
+**What ZMQ changes.** [ZmqProducerStateTable / ZmqConsumerStateTable](10_ipc_mechanisms.md#pattern-5-zmqproducerstatetable--zmqconsumerstatetable-zmq-based) replaces the Redis notification path with a direct ZeroMQ socket between fpmsyncd and orchagent. The route data travels program-to-program over a TCP socket, skipping the Redis pub/sub layer. Redis can still be used for persistence (so the data is inspectable in APPL_DB), but the critical wake-up-and-deliver path no longer depends on it.
+
+**Why it helps.** Redis is a general-purpose key-value store — excellent for inspectability and persistence, but not optimized for high-throughput message delivery between two processes on the same machine. ZMQ is built specifically for low-latency, high-throughput inter-process messaging. Removing Redis from the notification path eliminates its serialization overhead, its single-threaded event loop as a bottleneck, and the extra network hop through the Redis TCP socket. The effect is most visible when the ASIC is fast enough that Redis overhead — not hardware programming — becomes the limiting factor.
+
+**How to enable it.** ZMQ mode is typically enabled at the platform level through build-time or runtime configuration. The exact mechanism varies by SONiC version and vendor platform. On platforms that support it, the fpmsyncd and orchagent processes are started with ZMQ-aware flags that redirect their IPC through the ZMQ socket.
+
+**Trade-offs.** ZMQ is point-to-point: only one consumer receives each message, so there is no fan-out to multiple subscribers the way Redis pub/sub provides. This is not a problem for the route pipeline (orchagent is the sole consumer), but it changes the debugging story — you cannot simply subscribe to a Redis channel to watch routes flow. The data is still written to APPL_DB for inspection, but the live notification stream is no longer visible through Redis tooling.
+
+### 2. Increase the Orchagent Batch Size (`-b` flag)
+
+**What it is.** The `-b` flag controls how many entries orchagent drains from APPL_DB in a single `doTask()` call. The default is **1,024**. When orchagent wakes up (triggered by a Redis or ZMQ notification), it calls `pops()` to read up to `-b` entries from the consumer table, processes all of them in one loop iteration, and flushes the resulting SAI operations.
+
+**Why it helps.** A larger batch means more routes are processed per `doTask()` cycle. Each cycle carries fixed overhead — waking up, acquiring locks, setting up the EntityBulker, flushing, and waiting for the sync-mode response. Spreading that fixed cost over more routes reduces the per-route overhead. For example, doubling `-b` from 1,024 to 2,048 cuts the number of `doTask()` cycles roughly in half for the same total route count.
+
+**How to change it.** The `-b` flag is passed on the orchagent command line, typically set in the SWSS container's startup script or supervisord configuration. For example, changing `-b 1024` to `-b 4096` means orchagent will drain up to 4,096 routes per cycle.
+
+**Trade-offs.** Larger batches increase the memory footprint of each `doTask()` cycle (more entries buffered in the EntityBulker before flushing) and increase the latency of individual route programming — a single route arriving in an otherwise quiet system must wait until the batch timer fires or the batch fills, whichever comes first. For bulk convergence scenarios (reboot, peering flap), larger batches are strictly better. For steady-state single-route updates, the difference is negligible because the batch rarely fills.
+
+### 3. Increase the SAI Bulk Size (`-k` flag)
+
+**What it is.** The `-k` flag controls how many SAI operations orchagent packs into a single bulk call to ASIC_DB. The default is **1,000**. After `doTask()` collects all route operations in the EntityBulker, `flush()` splits them into chunks of `-k` and writes each chunk as one `BULK_CREATE` (or `BULK_REMOVE`) entry in ASIC_DB.
+
+**How it interacts with `-b`.** The `-b` and `-k` flags operate at different layers. `-b` controls how many routes orchagent reads from APPL_DB; `-k` controls how many of those routes go into each SAI bulk call. With the defaults (`-b 1024`, `-k 1000`), each batch produces two ASIC_DB writes: one bulk of 1,000 and one of 24. If `-k` is raised to 1,024 or higher, the entire batch fits in a single bulk call, eliminating the leftover write.
+
+**Why it helps.** Each bulk call to ASIC_DB carries fixed overhead: Redis serialization, syncd wake-up, VID-to-RID translation setup, and (in sync mode) a round-trip wait for the response. Fewer, larger bulk calls reduce the number of times this overhead is paid. The improvement is most visible when `-k` is aligned with or exceeds `-b`, so the batch/bulk split disappears entirely.
+
+**How to change it.** Like `-b`, the `-k` flag is passed on the orchagent command line. For example, `orchagent -b 4096 -k 4096 -s` drains 4,096 routes per cycle and sends them all in one SAI bulk call.
+
+**Trade-offs.** Very large bulk sizes increase the memory consumed by a single ASIC_DB entry and the time syncd spends processing one bulk before it can do anything else. In practice, values of 1,000–4,096 are commonly used; going much higher yields diminishing returns because the ASIC's own per-call overhead dominates.
+
+### 4. Switch from Synchronous to Asynchronous Mode
+
+**What it is.** Orchagent's `-s` flag enables synchronous mode. After each bulk flush to ASIC_DB, orchagent blocks — it does not process the next batch until syncd writes a `GETRESPONSE` message back to ASIC_DB confirming that the hardware programming succeeded (or failed). This is the default since [SONiC PR #5735](https://github.com/sonic-net/sonic-buildimage/pull/5735) (October 2020).
+
+**What async mode changes.** Without the `-s` flag, orchagent runs in asynchronous mode. Each SAI call returns `SAI_STATUS_SUCCESS` as soon as the operation is queued in ASIC_DB — orchagent does not wait for syncd to actually program the ASIC. It immediately moves on to the next batch, keeping the pipeline moving without round-trip delays.
+
+**Why it helps.** The sync-mode round trip is expensive. In the DX010 measurements, each 1,024-route batch took ~1.5 seconds end-to-end, of which only ~390 ms was actual ASIC programming time (two SAI bulk calls × ~195 ms average). The remaining ~1.1 seconds was Redis serialization and the blocking wait for the response. Async mode eliminates the blocking wait, allowing orchagent to pipeline multiple batches — it can prepare and send the next batch while syncd is still programming the previous one.
+
+**Why it is not the default.** In sync mode, if the vendor SAI returns an error (e.g., table full, invalid parameter), orchagent sees it immediately as a return code and can handle it — log the error, retry, or skip the entry. In async mode, orchagent has already moved on. If syncd encounters a programming failure, it has no way to report it back to orchagent. The only safe response is for syncd to crash (`abort()`), which triggers a container restart and full state reconciliation. This is why SONiC switched the default from async to sync — silent hardware programming failures in production were going undetected.
+
+**Trade-offs.** Async mode increases throughput but **sacrifices error visibility**. If a single route fails to program (e.g., the ASIC table is full), syncd crashes, which restarts the entire SYNCD container and forces a full reconciliation of all programmed state — a much more disruptive event than a single error handled gracefully in sync mode. Operators choosing async mode must accept this trade-off and have monitoring in place to detect syncd crashes.
+
+For a detailed explanation of both modes, including the error-handling behavior, see [SAI and Syncd — Async vs. Sync Mode](13_sai_and_syncd.md#async-vs-sync-mode).
+
+### 5. ASIC Hardware and Vendor SAI
+
+**What it is.** The final stage of the pipeline — syncd calling the vendor SAI library, which programs the ASIC's forwarding tables — is the slowest stage and the one that no SONiC software knob can change. The speed of this stage is determined by two factors: the ASIC hardware itself (how fast its table management engine operates) and the vendor SAI implementation (how efficiently the SAI library translates bulk operations into ASIC SDK calls).
+
+**Why it matters.** On the DX010, the measured SAI bulk-create time ranged from 3 ms to 1,197 ms per 1,000-route bulk, with a median of 161 ms and an average of 195 ms. This wide spread reflects table management overhead that grows as the table fills. A different ASIC — for example, an NVIDIA Spectrum-based switch — may have fundamentally different table architecture and programming speed, producing a very different rate even with identical SONiC software settings.
+
+**What determines the difference.** ASIC vendors design their forwarding table hardware differently. Some use hash-based tables that program in near-constant time regardless of occupancy; others use algorithmic longest-prefix-match (LPM) structures whose insertion time varies with table depth and prefix distribution. The vendor SAI library also matters: a well-optimized SAI implementation can batch SDK calls, use DMA transfers, or exploit hardware-specific acceleration that a generic implementation cannot. These are ASIC-vendor engineering decisions, not SONiC configuration choices.
+
+**What an operator can do.** This knob is not a configuration change — it is a hardware choice. When evaluating platforms, request route-download benchmark results from the vendor, run your own benchmark using the methodology described in this document, and compare rates at the route counts relevant to your deployment. Ensure the comparison uses the same SONiC software settings (batch size, sync mode, IPC path) so the numbers reflect ASIC differences rather than configuration differences.
+
+### Summary of Knobs
+
+| # | Knob                 | Stage                | Default          | Change to          | Trade-off |
+|---|----------------------|----------------------|------------------|--------------------|-----------|
+| 1 | Northbound IPC       | fpmsyncd → orchagent | Redis            | ZMQ                | Loses pub/sub observability |
+| 2 | Batch size (`-b`)    | APPL_DB → orchagent  | 1,024            | 2,048 / 4,096      | More memory per cycle |
+| 3 | SAI bulk size (`-k`) | orchagent → ASIC_DB  | 1,000            | Match `-b`         | Diminishing returns past ~4,096 |
+| 4 | Sync mode (`-s`)     | orchagent ↔ syncd    | Synchronous      | Remove `-s`        | Errors crash syncd instead of graceful handling |
+| 5 | ASIC / vendor SAI    | syncd → ASIC         | Broadcom (DX010) | Different platform | Hardware choice, not configuration |
 
 ---
 
