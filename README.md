@@ -28,7 +28,8 @@ Read in order — each document builds on the concepts from the previous ones.
 | 13 | [SAI and Syncd](docs/13_sai_and_syncd.md) | Switch Abstraction Interface, meta layer, syncd processing, VID/RID |
 | 14 | [The BGP Container and FRR](docs/14_bgp_container.md) | FRRouting, zebra, fpmsyncd, route programming, RIB/FIB mapping, unified/split mode |
 | 15 | [The BGP Route-Download Benchmark](docs/15_benchmark.md) | Measuring route programming rate end-to-end, pipeline stages, tooling, and measured results |
-| 16 | [Configuration Management](docs/16_configuration_management.md) | config_db.json, CLI, YANG validation, config save/load |
-| 17 | [Reboot Types and Config Reload](docs/17_reboot_and_reload.md) | Cold, fast, warm reboot comparison; config reload internals |
-| 18 | [State Interactions](docs/18_state_interactions.md) | End-to-end data flows for routing, port events, VLAN, ARP |
-| 19 | [Troubleshooting](docs/19_troubleshooting.md) | Debugging techniques for common SONiC problems |
+| 16 | [The PMON Container](docs/16_pmon_container.md) | Platform Monitor — Platform API, vendor plugins, xcvrd, psud, thermalctld, ledd, and hardware monitoring |
+| 17 | [Configuration Management](docs/17_configuration_management.md) | config_db.json, CLI, YANG validation, config save/load |
+| 18 | [Reboot Types and Config Reload](docs/18_reboot_and_reload.md) | Cold, fast, warm reboot comparison; config reload internals |
+| 19 | [State Interactions](docs/19_state_interactions.md) | End-to-end data flows for routing, port events, VLAN, ARP |
+| 20 | [Troubleshooting](docs/20_troubleshooting.md) | Debugging techniques for common SONiC problems |

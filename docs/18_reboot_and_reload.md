@@ -1,6 +1,6 @@
 # Reboot Types and Config Reload
 
-> **Prerequisites**: [Container Run Time](05_container_run_time.md) (systemd lifecycle), [The Database Container](07_database_container.md) (Redis persistence), and [Configuration Management](16_configuration_management.md) (CONFIG_DB and config_db.json).
+> **Prerequisites**: [Container Run Time](05_container_run_time.md) (systemd lifecycle), [The Database Container](07_database_container.md) (Redis persistence), and [Configuration Management](17_configuration_management.md) (CONFIG_DB and config_db.json).
 
 SONiC supports multiple reboot types, each with different tradeoffs between disruption time, state preservation, and complexity. Understanding these is critical for operational planning — choosing the wrong reboot type during maintenance can cause unnecessary outages.
 
@@ -303,4 +303,4 @@ This prevents all services from competing for CPU simultaneously, reducing initi
 
 ---
 
-**Previous**: [← Configuration Management](16_configuration_management.md) · **Next**: [State Interactions →](18_state_interactions.md)
+**Previous**: [← Configuration Management](17_configuration_management.md) · **Next**: [State Interactions →](19_state_interactions.md)

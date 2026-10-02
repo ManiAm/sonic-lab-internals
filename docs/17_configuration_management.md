@@ -169,7 +169,7 @@ If you make changes and don't run `config save`, the changes will be lost on nex
 | `config save` | Saves current CONFIG_DB to disk | No impact |
 | `config load` | Loads from file without restart | Adds/modifies CONFIG_DB entries |
 
-> For detailed coverage of `config reload` internals and all SONiC reboot types (cold, fast, warm), see [Reboot Types and Config Reload](17_reboot_and_reload.md).
+> For detailed coverage of `config reload` internals and all SONiC reboot types (cold, fast, warm), see [Reboot Types and Config Reload](18_reboot_and_reload.md).
 
 ## YANG Validation
 
@@ -223,4 +223,4 @@ If there is no `config_db.json` (fresh install), SONiC starts with a default/emp
 
 ---
 
-**Previous**: [← The BGP Route-Download Benchmark](15_benchmark.md) · **Next**: [Reboot Types and Config Reload →](17_reboot_and_reload.md)
+**Previous**: [← The PMON Container](16_pmon_container.md) · **Next**: [Reboot Types and Config Reload →](18_reboot_and_reload.md)
