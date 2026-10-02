@@ -169,14 +169,21 @@ The flow within a single `doTask()` invocation:
 
 This deferred-flush pattern means 1,024 routes produce a small number of bulk hardware calls instead of 1,024 individual ones. The reduction in per-route overhead is substantial: each bulk call amortizes the syncd processing, ASIC table lookup, and sync-mode acknowledgment across hundreds of routes.
 
-### The 1,000-Entry SAI Bulk Cap
+### The SAI Bulk Size (`-k` Flag)
 
-EntityBulker has its own internal limit: a maximum of **1,000 entries per SAI bulk call**. This cap is independent of the `-b` flag. When a `doTask()` processes 1,024 routes, `flush()` splits them into **two** bulk operations:
+`-k` sets the maximum number of entries in one SAI bulk call (`gMaxBulkSize`). When the flag is omitted, the default is **1,000**. EntityBulker uses that value when `flush()` splits the buffered operations into `sai_bulk_*` calls.
+
+`-b` and `-k` are both orchagent command-line options, and they control different layers:
+
+- **`-b`** — how many APPL_DB entries one `doTask()` drains.
+- **`-k`** — how many of those entries go into one SAI bulk call.
+
+A stock SONiC start passes `-b 1024` and omits `-k`, so a full pop of 1,024 routes flushes as two bulk calls:
 
 - One bulk of **1,000** routes
 - One bulk of the remaining **24** routes
 
-The orchagent batch size (1,024, set by `-b`) and the SAI bulk size (1,000, set inside EntityBulker) are different numbers controlled at different layers. Increasing `-b` above 1,000 does not produce larger SAI bulk calls — it produces more of them per `doTask()` invocation.
+Raising `-b` above the current `-k` does not enlarge each SAI call. It produces more of them per `doTask()`. Raising `-k` (for example `-k 65536`) raises the cap, up to whatever limit the vendor SAI accepts.
 
 ## The Notification Thread
 

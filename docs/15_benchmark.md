@@ -21,7 +21,7 @@ Two inter-process communication (IPC) hops around orchagent have the largest imp
 
 - **Northbound (fpmsyncd → orchagent):** fpmsyncd writes routes to APPL_DB, and orchagent drains them via Redis subscription in batches of up to 1,024 entries (the `-b` flag default). This is stock SONiC behavior. Platforms that switch this hop to ZMQ (a direct program-to-program pipe) with larger batch sizes reach higher rates on faster ASICs.
 
-- **Southbound (orchagent → syncd):** orchagent does not write one route at a time to ASIC_DB. Instead, its EntityBulker collects SAI operations and flushes them in bulk (up to 1,000 entries per flush). This platform runs synchronous mode (`-s` flag): after each bulk flush, orchagent blocks until syncd acknowledges the result, so programming errors surface immediately as return codes.
+- **Southbound (orchagent → syncd):** orchagent does not write one route at a time to ASIC_DB. Instead, its EntityBulker collects SAI operations and flushes them in bulk. The bulk size is the `-k` flag; this platform omits it, so the default of 1,000 applies. It also runs synchronous mode (`-s`): after each bulk flush, orchagent blocks until syncd acknowledges the result, so programming errors surface immediately as return codes.
 
 
 ## 100k Routes Through the Pipeline — A Concrete Example
@@ -97,9 +97,9 @@ Orchagent's `ConsumerStateTable` receives a Redis notification that new routes a
 
 #### orchagent → ASIC_DB
 
-At the end of `doTask()`, `EntityBulker::flush()` fires. The sairedis library serializes the route operations into `BULK_CREATE` entries on ASIC_DB. `EntityBulker` has an internal cap of 1,000 entries per SAI bulk call. So each 1,024-route orchagent batch produces **two** ASIC_DB writes: one bulk of 1,000 routes and one bulk of the remaining 24.
+At the end of `doTask()`, `EntityBulker::flush()` fires. The sairedis library serializes the route operations into `BULK_CREATE` entries on ASIC_DB. This run used the stock command line (`-b 1024`, no `-k`), so the SAI bulk size stayed at its default of 1,000. Each 1,024-route orchagent batch therefore produced **two** ASIC_DB writes: one bulk of 1,000 routes and one bulk of the remaining 24.
 
-> The orchagent batch size (1,024) and the SAI bulk size (1,000) are different numbers, set at different layers.
+> Both numbers are orchagent options, at different layers. `-b` is how many APPL_DB entries one `doTask()` drains. `-k` is how many of those entries go into one SAI bulk call (default 1,000 when omitted). This measurement did not pass `-k`, so the 1,000 + 24 split is what the DX010 actually did. Raising `-k` would change that split. See [The SAI Bulk Size](12_orchagent.md#the-sai-bulk-size--k-flag).
 
 #### ASIC_DB → syncd
 
@@ -150,7 +150,7 @@ The stages from `APPL_DB → orchagent` through `syncd → orchagent` acknowledg
 | zebra → fpmsyncd        | Streaming, per-route      | FPM socket, no batching |
 | fpmsyncd → APPL_DB      | Per-route Redis writes    | ProducerStateTable, µs apart |
 | **APPL_DB → orchagent** | Batched, 1,024 routes     | `-b 1024` flag; first batching point |
-| **orchagent → ASIC_DB** | Bulk writes of 1,000 + 24 | EntityBulker internal cap of 1,000 |
+| **orchagent → ASIC_DB** | Bulk writes of 1,000 + 24 | Default `-k` of 1,000 (flag omitted on this run) |
 | ASIC_DB → syncd         | Bulk processing           | Syncd pops entire bulk entry |
 | syncd → ASIC            | Bulk hardware install     | `sai_bulk_create_route_entry()` |
 | syncd → orchagent       | Sync-mode response        | Orchagent blocks until acknowledgment |
