@@ -252,4 +252,4 @@ redis-cli -n 1 keys '*ROUTE*10.1.0.0*'
 
 ---
 
-**Previous**: [← Reboot Types and Config Reload](18_reboot_and_reload.md) · **Next**: [Troubleshooting →](20_troubleshooting.md)
+**Previous**: [← Warm Reboot Deep Dive](20_warm_reboot.md) · **Next**: [Troubleshooting →](22_troubleshooting.md)

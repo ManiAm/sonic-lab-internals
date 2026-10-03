@@ -24,8 +24,6 @@ There is no fixed ordering between manager daemons and sync daemons — they run
 
 Manager daemons handle **CONFIG_DB updates** and transform them into operational state. Their naming convention is `*mgrd` (manager daemon). Each daemon subscribes to specific CONFIG_DB tables (via SubscriberStateTable), validates the incoming configuration, applies it to the Linux kernel, and pushes the processed result to APPL_DB (via ProducerStateTable) for orchagent to consume.
 
-### Manager Daemons Reference
-
 | Daemon       | CONFIG_DB Tables                                            | What It Does                               |
 |--------------|-------------------------------------------------------------|--------------------------------------------|
 | `portmgrd`   | PORT                                                        | Configures port admin state, MTU, speed in kernel + APPL_DB |
@@ -49,8 +47,6 @@ Manager daemons handle **CONFIG_DB updates** and transform them into operational
 > **Note**: Don't confuse these with the `syncd` process in the Syncd container (covered in [SAI and Syncd](13_sai_and_syncd.md)). The naming is unfortunately similar.
 
 Sync daemons handle **events from the Linux kernel or control-plane daemons**, translating real-time system state into database entries. Each daemon listens to a specific event source — typically a netlink socket for kernel events or a protocol-specific socket such as the FPM socket from FRR's zebra — parses incoming messages into key-value records, and publishes them to APPL_DB or STATE_DB.
-
-### Sync Daemons Reference
 
 Sync daemons that run **inside the SWSS container**:
 

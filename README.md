@@ -30,6 +30,8 @@ Read in order — each document builds on the concepts from the previous ones.
 | 15 | [The BGP Route-Download Benchmark](docs/15_benchmark.md) | Measuring route programming rate end-to-end, pipeline stages, tooling, and measured results |
 | 16 | [The PMON Container](docs/16_pmon_container.md) | Platform Monitor — Platform API, vendor plugins, xcvrd, psud, thermalctld, ledd, and hardware monitoring |
 | 17 | [Configuration Management](docs/17_configuration_management.md) | config_db.json, CLI, YANG validation, config save/load |
-| 18 | [Reboot Types and Config Reload](docs/18_reboot_and_reload.md) | Cold, fast, warm reboot comparison; config reload internals |
-| 19 | [State Interactions](docs/19_state_interactions.md) | End-to-end data flows for routing, port events, VLAN, ARP |
-| 20 | [Troubleshooting](docs/20_troubleshooting.md) | Debugging techniques for common SONiC problems |
+| 18 | [Config Reload](docs/18_config_reload.md) | CONFIG_DB flush and reload, service stop/start order, delayed service start, config reload vs alternatives |
+| 19 | [Reboot Types](docs/19_reboot_types.md) | Cold, soft, fast, warm, and express reboot comparison |
+| 20 | [Warm Reboot Deep Dive](docs/20_warm_reboot.md) | Pre-shutdown state saving, kexec kernel transition, reconciliation, warmboot-finalizer, container-level warm restart |
+| 21 | [State Interactions](docs/21_state_interactions.md) | End-to-end data flows for routing, port events, VLAN, ARP |
+| 22 | [Troubleshooting](docs/22_troubleshooting.md) | Debugging techniques for common SONiC problems |
