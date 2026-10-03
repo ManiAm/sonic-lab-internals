@@ -30,9 +30,10 @@ Read in order — each document builds on the concepts from the previous ones.
 | 15 | [The BGP Route-Download Benchmark](docs/15_benchmark.md) | Measuring route programming rate end-to-end, pipeline stages, tooling, and measured results |
 | 16 | [The PMON Container](docs/16_pmon_container.md) | Platform Monitor — Platform API, vendor plugins, xcvrd, psud, thermalctld, ledd, and hardware monitoring |
 | 17 | [Platform Configuration](docs/17_platform_configuration.md) | The device/ hierarchy, ONIE platform strings, HwSKU folders, port_config.ini, platform.json, and how platform files seed CONFIG_DB |
-| 18 | [Configuration Management](docs/18_configuration_management.md) | config_db.json, CLI, YANG validation, config save/load |
-| 19 | [Config Reload](docs/19_config_reload.md) | CONFIG_DB flush and reload, service stop/start order, delayed service start, config reload vs alternatives |
-| 20 | [Reboot Types](docs/20_reboot_types.md) | Cold, soft, fast, warm, and express reboot comparison |
-| 21 | [Warm Reboot Deep Dive](docs/21_warm_reboot.md) | Pre-shutdown state saving, kexec kernel transition, reconciliation, warmboot-finalizer, container-level warm restart |
-| 22 | [State Interactions](docs/22_state_interactions.md) | End-to-end data flows for routing, port events, VLAN, ARP |
-| 23 | [Troubleshooting](docs/23_troubleshooting.md) | Debugging techniques for common SONiC problems |
+| 18 | [Host Services](docs/18_host_services.md) | System health monitoring (healthd), monit, watchdog control, and other host-level systemd services |
+| 19 | [Configuration Management](docs/19_configuration_management.md) | config_db.json, CLI, YANG validation, config save/load |
+| 20 | [Config Reload](docs/20_config_reload.md) | CONFIG_DB flush and reload, service stop/start order, delayed service start, config reload vs alternatives |
+| 21 | [Reboot Types](docs/21_reboot_types.md) | Cold, soft, fast, warm, and express reboot comparison |
+| 22 | [Warm Reboot Deep Dive](docs/22_warm_reboot.md) | Pre-shutdown state saving, kexec kernel transition, reconciliation, warmboot-finalizer, container-level warm restart |
+| 23 | [State Interactions](docs/23_state_interactions.md) | End-to-end data flows for routing, port events, VLAN, ARP |
+| 24 | [Troubleshooting](docs/24_troubleshooting.md) | Debugging techniques for common SONiC problems |

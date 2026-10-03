@@ -1,6 +1,6 @@
 # Reboot Types
 
-> **Prerequisites**: [Container Run Time](05_container_run_time.md) (systemd lifecycle), [The Database Container](07_database_container.md) (Redis persistence), and [Config Reload](19_config_reload.md) (CONFIG_DB flush/reload and service restart).
+> **Prerequisites**: [Container Run Time](05_container_run_time.md) (systemd lifecycle), [The Database Container](07_database_container.md) (Redis persistence), and [Config Reload](20_config_reload.md) (CONFIG_DB flush/reload and service restart).
 
 SONiC supports multiple reboot types, each with different tradeoffs between disruption time, state preservation, and complexity. Understanding these is critical for operational planning — choosing the wrong reboot type during maintenance can cause unnecessary outages.
 
@@ -140,7 +140,7 @@ Warm reboot is the most advanced reboot type. Its goal is to restart the entire 
 sudo warm-reboot
 ```
 
-Because of its complexity — state persistence, multi-layer reconciliation, and strict platform requirements — warm reboot has its own dedicated document. For the full explanation, see [Warm Reboot Deep Dive](21_warm_reboot.md).
+Because of its complexity — state persistence, multi-layer reconciliation, and strict platform requirements — warm reboot has its own dedicated document. For the full explanation, see [Warm Reboot Deep Dive](22_warm_reboot.md).
 
 > **Note — NVIDIA/Mellanox platforms:** On NVIDIA (Mellanox) switches, running `warm-reboot` internally triggers a vendor-specific mechanism called **Fast-Fast Boot (FFB)**, which sets `SONIC_BOOT_TYPE=fastfast`. FFB is NVIDIA's implementation of the warm reboot concept, optimized for their Spectrum ASICs. From the operator's perspective, the command and the goal are the same — hitless restart — but the underlying shutdown and ASIC handling differ from the generic warm reboot path.
 
@@ -191,4 +191,4 @@ sudo express-reboot
 
 ---
 
-**Previous**: [← Config Reload](19_config_reload.md) · **Next**: [Warm Reboot Deep Dive →](21_warm_reboot.md)
+**Previous**: [← Config Reload](20_config_reload.md) · **Next**: [Warm Reboot Deep Dive →](22_warm_reboot.md)

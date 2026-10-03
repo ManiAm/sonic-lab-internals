@@ -377,6 +377,7 @@ PMON is a **monitoring and reporting** container. It reads hardware state and pu
 - **Run routing protocols.** That is the BGP container's job.
 - **Apply user configuration.** That is the SWSS container's job (manager daemons read CONFIG_DB; PMON daemons read hardware state).
 - **Make forwarding decisions.** PMON has no involvement in the packet-forwarding pipeline.
+- **Aggregate system-wide health.** That is `healthd`'s job — a host-level systemd service that reads PMON's STATE_DB output and combines it with container/service liveness checks. See [Host Services](18_host_services.md#system-health-monitoring-healthd) for details.
 
 The one area where PMON *writes* to hardware (rather than just reading) is LED control (`ledd`, and the LED-setting calls in `psud`/`thermalctld`) and fan speed control (via `thermalctld`'s thermal policy). These are physical platform actions, not data-plane actions.
 

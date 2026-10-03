@@ -1,8 +1,8 @@
 # Warm Reboot Deep Dive
 
-> **Prerequisites**: [Reboot Types](20_reboot_types.md) (comparison of cold, fast, and warm reboot), [The Database Container](07_database_container.md) (Redis persistence and AOF), [SAI and Syncd](13_sai_and_syncd.md) (VID/RID mappings and the SAI meta layer), and [Orchagent Deep Dive](12_orchagent.md) (how orchagent processes state from APPL_DB to ASIC_DB).
+> **Prerequisites**: [Reboot Types](21_reboot_types.md) (comparison of cold, fast, and warm reboot), [The Database Container](07_database_container.md) (Redis persistence and AOF), [SAI and Syncd](13_sai_and_syncd.md) (VID/RID mappings and the SAI meta layer), and [Orchagent Deep Dive](12_orchagent.md) (how orchagent processes state from APPL_DB to ASIC_DB).
 
-[Reboot Types](20_reboot_types.md) introduced the five reboot types and summarized what each one does. This document goes deeper into **warm reboot** — the most complex reboot path in SONiC. It covers the full lifecycle: what happens before shutdown, how the kernel transitions, how each layer restores and reconciles state after boot, and how the system knows that warm reboot is complete.
+[Reboot Types](21_reboot_types.md) introduced the five reboot types and summarized what each one does. This document goes deeper into **warm reboot** — the most complex reboot path in SONiC. It covers the full lifecycle: what happens before shutdown, how the kernel transitions, how each layer restores and reconciles state after boot, and how the system knows that warm reboot is complete.
 
 ## The Core Idea
 
@@ -535,4 +535,4 @@ If any service shows a state other than `reconciled`, check the syslog for error
 
 ---
 
-**Previous**: [← Reboot Types](20_reboot_types.md) · **Next**: [State Interactions →](22_state_interactions.md)
+**Previous**: [← Reboot Types](21_reboot_types.md) · **Next**: [State Interactions →](23_state_interactions.md)

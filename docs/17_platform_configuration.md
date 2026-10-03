@@ -103,18 +103,18 @@ These files describe the **chassis** — everything about the box that is true r
 
 | File | Purpose |
 |------|------------------------------------|
+| `platform.json` | Capabilities of the chassis: port-to-lane pools and supported breakout modes (ways to split one physical port into multiple logical ports), number of fans/PSUs/thermals, and feature flags (e.g. whether ASIC firmware may be field-upgraded by the OS) |
 | `platform_asic` | One-line file naming the ASIC vendor (e.g. `broadcom`, `mellanox`, `barefoot`). SONiC uses this to select the correct syncd variant and SAI library. |
 | `default_sku` | Which HwSKU to use when nothing else selects one — e.g. `DellEMC-Z9332f-O32 t1` (SKU name + default role) |
 | `sonic_platform-*.whl` | The Platform API package — Python classes that PMON uses to read fans, PSUs, thermals, EEPROM, and transceivers. Built at image time from the vendor's `sonic_platform/` source directory. See [The PMON Container](16_pmon_container.md) for how this package is loaded and used. |
 | `plugins/` | Legacy Python plugins for vendor-specific behavior (SFP access, LED control). Newer platforms use the `sonic_platform` wheel instead. |
-| `pmon_daemon_control.json` | Which platform-monitor daemons run on this box (some platforms have no PSU daemon, etc.) |
+| `pmon_daemon_control.json` | Which platform-monitor daemons run on this box (some platforms have no PSU daemon, etc.). See [Daemon Control](16_pmon_container.md#daemon-control-enabling-and-disabling-daemons). |
+| `thermal_policy.json` | Fan-speed policy: which thermal conditions drive which fan actions |
 | `installer.conf` | Boot/console settings consumed at image install (console port, baud rate) |
-| `system_health_monitoring_config.json` | What the system-health service checks/ignores on this platform |
-| `platform.json` | Capabilities of the chassis: port-to-lane pools and supported breakout modes (ways to split one physical port into multiple logical ports), number of fans/PSUs/thermals, and feature flags (e.g. whether ASIC firmware may be field-upgraded by the OS) |
-| `pcie.yaml` | Expected PCIe topology, used by the PCIe health checker |
+| `system_health_monitoring_config.json` | What the system-health service (`healthd`) checks/ignores on this platform — polling interval, devices to skip, LED colors. See [System Health Monitoring](18_host_services.md#system-health-monitoring-healthd). |
+| `pcie.yaml` | Expected PCIe topology, used by the PCIe health checker. See [pcie-check](18_host_services.md#pcie-check). |
 | `sensors.conf` | lm-sensors mapping: names, scaling, and alarm thresholds for voltage/temp sensors |
 | `platform_components.json` | Firmware-upgradable components (BIOS, CPLD, FPGA, ONIE) for `fwutil` |
-| `thermal_policy.json` | Fan-speed policy: which thermal conditions drive which fan actions |
 
 Vendors are free to add extras (firmware bundles, environment configs, custom reboot scripts, porting notes); the files above are the ones that SONiC infrastructure looks for.
 
@@ -169,7 +169,7 @@ The device folder files are **seeds**, not the runtime state. The flow:
                      (sai.profile/XML/bcm)
 ```
 
-1. **First boot (or config wipe):** `sonic-cfggen` reads the platform string, picks the HwSKU, and renders `port_config.ini` + the `.j2` templates into **CONFIG_DB** (persisted as `/etc/sonic/config_db.json`). See [Configuration Management](18_configuration_management.md) for more on `sonic-cfggen` and CONFIG_DB loading.
+1. **First boot (or config wipe):** `sonic-cfggen` reads the platform string, picks the HwSKU, and renders `port_config.ini` + the `.j2` templates into **CONFIG_DB** (persisted as `/etc/sonic/config_db.json`). See [Configuration Management](19_configuration_management.md) for more on `sonic-cfggen` and CONFIG_DB loading.
 2. **Every boot after that:** CONFIG_DB is the source of truth. The seed files are only consulted again if you change SKU, run a config wipe, or use breakout commands.
 3. **In parallel**, syncd loads the ASIC config named by `sai.profile`. The ASIC's port map and the PORT table must describe the same layout.
 
@@ -306,4 +306,4 @@ Using the Step 0 backup as a reference, re-apply what still makes sense on the n
 
 ---
 
-**Previous**: [← The PMON Container](16_pmon_container.md) · **Next**: [Configuration Management →](18_configuration_management.md)
+**Previous**: [← The PMON Container](16_pmon_container.md) · **Next**: [Host Services →](18_host_services.md)
