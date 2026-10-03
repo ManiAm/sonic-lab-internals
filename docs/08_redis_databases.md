@@ -36,7 +36,7 @@ INTERFACE|Ethernet0|10.0.0.2/31     → {}
 
 - Changes to CONFIG_DB trigger events that manager daemons pick up and process. The specific notification mechanism (key-space notifications via `SubscriberStateTable`) is covered in [IPC Mechanisms — Pattern 1](10_ipc_mechanisms.md#pattern-1-subscriberstatetable-key-space-notifications).
 
-- When configuration enters through the management framework (REST, gNMI, KLISH CLI), it is validated against YANG models before being written to CONFIG_DB. However, this validation is enforced by the management framework — not by CONFIG_DB itself. The old CLI and direct Redis writes bypass YANG validation entirely. For details, see [Configuration Management — YANG Validation](17_configuration_management.md#yang-validation).
+- When configuration enters through the management framework (REST, gNMI, KLISH CLI), it is validated against YANG models before being written to CONFIG_DB. However, this validation is enforced by the management framework — not by CONFIG_DB itself. The old CLI and direct Redis writes bypass YANG validation entirely. For details, see [Configuration Management — YANG Validation](18_configuration_management.md#yang-validation).
 
 ## APPL_DB
 
