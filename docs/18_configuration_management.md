@@ -169,7 +169,7 @@ If you make changes and don't run `config save`, the changes will be lost on nex
 | `config save` | Saves current CONFIG_DB to disk | No impact |
 | `config load` | Loads from file without restart | Adds/modifies CONFIG_DB entries |
 
-> For detailed coverage of `config reload` internals, see [Config Reload](18_config_reload.md). For all SONiC reboot types, see [Reboot Types](19_reboot_types.md).
+> For detailed coverage of `config reload` internals, see [Config Reload](19_config_reload.md). For all SONiC reboot types, see [Reboot Types](20_reboot_types.md).
 
 ## YANG Validation
 
@@ -223,4 +223,4 @@ If there is no `config_db.json` (fresh install), SONiC starts with a default/emp
 
 ---
 
-**Previous**: [← The PMON Container](16_pmon_container.md) · **Next**: [Config Reload →](18_config_reload.md)
+**Previous**: [← Platform & Port Configuration](17_platform_configuration.md) · **Next**: [Config Reload →](19_config_reload.md)

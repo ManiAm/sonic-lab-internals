@@ -315,7 +315,7 @@ This architecture means that:
 
 ## Daemon Control: Enabling and Disabling Daemons
 
-Not every platform needs every daemon. A platform without fan trays does not need `thermalctld`. A fixed chassis does not need `chassisd`. PMON supports daemon control through two mechanisms:
+Not every platform needs every daemon. A platform without fan trays does not need `thermalctld`. A fixed-configuration switch does not need `chassisd`. PMON supports daemon control through two mechanisms:
 
 ### pmon_daemon_control.json
 
@@ -382,4 +382,4 @@ The one area where PMON *writes* to hardware (rather than just reading) is LED c
 
 ---
 
-**Previous**: [← The Route-Download Benchmark](15_benchmark.md) · **Next**: [Configuration Management →](17_configuration_management.md)
+**Previous**: [← The Route-Download Benchmark](15_benchmark.md) · **Next**: [Platform Configuration →](17_platform_configuration.md)
