@@ -52,7 +52,7 @@ Sync daemons that run **inside the SWSS container**:
 
 | Daemon       | What It Listens To                          | What It Writes |
 |--------------|---------------------------------------------|----------------|
-| `portsyncd`  | Port netlink events, port_config.ini        | `APPL_DB` (PORT_TABLE), STATE_DB |
+| `portsyncd`  | Port netlink events, CONFIG_DB (PORT table) | `APPL_DB` (PORT_TABLE), STATE_DB |
 | `neighsyncd` | ARP/NDP neighbor netlink events             | `APPL_DB` (NEIGH_TABLE) |
 | `fdbsyncd`   | EVPN VxLAN FDB/VNI netlink and state events | `APPL_DB` (VXLAN_FDB_TABLE, VXLAN_REMOTE_VNI_TABLE) |
 | `gearsyncd`  | Gearbox PHY config (gearbox_config.json)    | `APPL_DB` (GEARBOX_TABLE) |
@@ -80,7 +80,7 @@ When SWSS starts:
 1. Depends on the database container (must be running first).
 2. The entrypoint script starts supervisord.
 3. supervisord starts all manager daemons, sync daemons, and orchagent.
-4. portsyncd reads `port_config.ini` and populates initial port state.
+4. portsyncd reads the PORT table from CONFIG_DB and publishes it to APPL_DB.
 5. orchagent waits for portsyncd to signal that all ports are initialized.
 6. Once ports are ready, orchagent begins processing all other APPL_DB events.
 

@@ -125,7 +125,7 @@ When a physical link goes down (cable unplugged, remote end failure):
       │
       v
 3. portsyncd starts:
-   - Reads port_config.ini (hardware profile with port lanes, speeds)
+   - Reads the PORT table from CONFIG_DB (port lanes, speeds, aliases)
    - Publishes port info to APPL_DB: PORT_TABLE:Ethernet0, Ethernet4, ...
    - Subscribes to netlink for interface events
       │

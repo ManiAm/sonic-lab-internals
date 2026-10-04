@@ -105,15 +105,15 @@ These files describe the **chassis** — everything about the box that is true r
 |------|------------------------------------|
 | `platform.json` | Capabilities of the chassis: port-to-lane pools and supported breakout modes (ways to split one physical port into multiple logical ports), number of fans/PSUs/thermals, and feature flags (e.g. whether ASIC firmware may be field-upgraded by the OS) |
 | `platform_asic` | One-line file naming the ASIC vendor (e.g. `broadcom`, `mellanox`, `barefoot`). SONiC uses this to select the correct syncd variant and SAI library. |
-| `default_sku` | Which HwSKU to use when nothing else selects one — e.g. `DellEMC-Z9332f-O32 t1` (SKU name + default role) |
+| `default_sku` | Which HwSKU to use when nothing else selects one — e.g. `DellEMC-Z9332f-O32 t1` (SKU name + default role). See [How the Active SKU Is Selected](#how-the-active-sku-is-selected). |
 | `sonic_platform-*.whl` | The Platform API package — Python classes that PMON uses to read fans, PSUs, thermals, EEPROM, and transceivers. Built at image time from the vendor's `sonic_platform/` source directory. See [The PMON Container](16_pmon_container.md) for how this package is loaded and used. |
 | `plugins/` | Legacy Python plugins for vendor-specific behavior (SFP access, LED control). Newer platforms use the `sonic_platform` wheel instead. |
 | `pmon_daemon_control.json` | Which platform-monitor daemons run on this box (some platforms have no PSU daemon, etc.). See [Daemon Control](16_pmon_container.md#daemon-control-enabling-and-disabling-daemons). |
-| `thermal_policy.json` | Fan-speed policy: which thermal conditions drive which fan actions |
+| `thermal_policy.json` | Fan-speed policy: which thermal conditions drive which fan actions. See [Fan Speed Control](16_pmon_container.md#fan-speed-control). |
+| `sensors.conf` | lm-sensors mapping: names, scaling, and alarm thresholds for voltage/temp sensors. See [sensord](16_pmon_container.md#the-daemons-inside-pmon). |
 | `installer.conf` | Boot/console settings consumed at image install (console port, baud rate) |
 | `system_health_monitoring_config.json` | What the system-health service (`healthd`) checks/ignores on this platform — polling interval, devices to skip, LED colors. See [System Health Monitoring](18_host_services.md#system-health-monitoring-healthd). |
 | `pcie.yaml` | Expected PCIe topology, used by the PCIe health checker. See [pcie-check](18_host_services.md#pcie-check). |
-| `sensors.conf` | lm-sensors mapping: names, scaling, and alarm thresholds for voltage/temp sensors |
 | `platform_components.json` | Firmware-upgradable components (BIOS, CPLD, FPGA, ONIE) for `fwutil` |
 
 Vendors are free to add extras (firmware bundles, environment configs, custom reboot scripts, porting notes); the files above are the ones that SONiC infrastructure looks for.
@@ -128,7 +128,17 @@ Vendors are free to add extras (firmware bundles, environment configs, custom re
 
 The same physical box is often sold or deployed in multiple port configurations: all ports at max speed, some ports split into breakouts, a couple of ports reserved for management, different buffer tuning for leaf vs. spine roles — each variant is one HwSKU subfolder (as shown in the [Seastone example above](#concrete-example-celestica-seastone-dx010)).
 
-The active SKU is chosen by (in order): the saved configuration (`DEVICE_METADATA.hwsku` in CONFIG_DB), a minigraph, or the platform's `default_sku` file.
+### How the Active SKU Is Selected
+
+The active SKU is resolved at boot time through a fixed fallback chain — the first source that provides an HwSKU wins:
+
+1. **Saved configuration (CONFIG_DB)** — On every normal boot, `/etc/sonic/config_db.json` already exists. SONiC loads it directly, and the `DEVICE_METADATA|localhost.hwsku` field inside it determines the active SKU. This is the common case — once a configuration is generated, it persists across reboots.
+
+2. **Minigraph** — On first boot (or after `config erase`), no CONFIG_DB exists. If a minigraph is available (`/etc/sonic/minigraph.xml` — an XML topology file provisioned via ZTP or placed manually), `sonic-cfggen -m` reads the `<HwSku>` element from it and generates a fresh CONFIG_DB with that SKU.
+
+3. **`default_sku` file** — If neither CONFIG_DB nor a minigraph exists, `sonic-cfggen` reads the platform's `default_sku` file (e.g., `DellEMC-Z9332f-O32 t1`) to pick the SKU and the topology preset, then generates a factory-default CONFIG_DB from it.
+
+Once CONFIG_DB is generated (by any of the three paths), it becomes the persistent source of truth — subsequent boots always use path 1.
 
 ### What Lives at the HwSKU Level
 
@@ -143,12 +153,12 @@ The active SKU is chosen by (in order): the saved configuration (`DEVICE_METADAT
 | `hwsku.json`                                     | The default **breakout mode** per port (works together with the platform-level `platform.json` for Dynamic Port Breakout) |
 | `media_settings.json`, `optics_si_settings.json` | SerDes signal-integrity presets per optic/cable type. Can live at either the platform level (shared by all SKUs) or the HwSKU level (per-layout overrides); the platform level is more common. |
 
-**The key file for port layout is `port_config.ini`.** A row looks like:
+The key file for port layout is `port_config.ini`. A row looks like:
 
 ```
-# name         lanes                  alias    index    speed
-Ethernet0      0,1,2,3,4,5,6,7        Et1/1    1        400000
-Ethernet8      8,9,10,11,12,13,14,15  Et2/1    2        400000
+# name     lanes                  alias   index    speed
+Ethernet0  0,1,2,3,4,5,6,7        Et1/1   1        400000
+Ethernet8  8,9,10,11,12,13,14,15  Et2/1   2        400000
 ```
 
 "Lanes" are the ASIC's SerDes (Serializer/Deserializer) lanes — individual high-speed serial links. A 400G port here consumes 8 lanes; splitting that port 2x200G means two ports with 4 lanes each — which is exactly what breakout mode changes.
@@ -181,37 +191,21 @@ redis-cli -n 4 keys "PORT|*"                # PORT table keys in CONFIG_DB
 redis-cli -n 4 hgetall "PORT|Ethernet0"     # lanes/speed/alias of one port
 ```
 
-## Changing the Port Layout
+## Switching to a Different HwSKU
 
-There are three ways to change how the ports on a switch are arranged. Each one is suited to a different situation:
+When you want a completely different port layout that the vendor has already defined (e.g. switching a box from an all-400G spine layout to a mixed 100G/400G leaf layout), you switch the active HwSKU. This replaces the *entire* port inventory: you regenerate CONFIG_DB for the target SKU and cold reboot.
 
-- **Switch to a different HwSKU** — Use this when you want a completely different port layout that the vendor has already defined (e.g. switching a box from an all-400G spine layout to a mixed 100G/400G leaf layout). This replaces the *entire* port inventory: you regenerate CONFIG_DB for the target SKU and cold reboot. The full procedure is [detailed below](#switching-hwsku--step-by-step).
-
-- **Dynamic Port Breakout** — Use this when you only need to split or combine a few individual ports without changing anything else (e.g. splitting one 400G port into 4×100G). Run `config interface breakout Ethernet0 "2x200G"` — SONiC reads the allowed modes from `platform.json` and `hwsku.json` and updates the PORT table accordingly.
-
-- **Author a new HwSKU folder** — Use this when the layout you need does not exist yet as a vendor-defined SKU. You create a new subfolder with a new `port_config.ini`, a matching ASIC config, and buffer/QoS templates. This is a porting task done in the source repository (`sonic-buildimage`), not on a live switch.
-
-The right choice depends on scope:
-
-|                 | HwSKU change                             | Dynamic Port Breakout |
-|-----------------|------------------------------------------|-----------------------|
-| Scope           | Entire port inventory                    | Individual ports      |
-| Config impact   | Full regeneration — custom settings lost | In-place; rest of config untouched |
-| Reboot required | Yes (cold reboot)                        | No                                 |
-| Defined by      | A different SKU folder                   | `platform.json` + `hwsku.json` breakout modes |
-| Typical use     | Repurposing a box (leaf → spine), adopting a vendor-defined alternate layout | Splitting one 400G port into 4×100G |
-
-Rule of thumb: if the layout you want already exists as a SKU folder, switch SKU. If you are adjusting a handful of ports within the current layout, use breakout.
+> **Note:** If you only need to split or combine a few individual ports without changing the overall layout, see [Dynamic Port Breakout](#dynamic-port-breakout) instead.
 
 ### Why You Cannot Just Edit the SKU Field
 
-It is tempting to set `DEVICE_METADATA.hwsku` to the new name and reload. **This will leave the switch broken.** The reason:
+As explained in [How the Active SKU Is Selected](#how-the-active-sku-is-selected), the running HwSKU comes from `DEVICE_METADATA|localhost.hwsku` in CONFIG_DB. It is tempting to just change that one field to the new SKU name and reload. **This will leave the switch broken.** Here is why:
 
-- The saved configuration contains a `PORT` table entry for every port — name, lanes, speed, alias — all describing the *old* SKU's layout.
-- Changing only the SKU name produces a mismatch: SONiC believes it is running the new SKU, but the port inventory still describes the old one.
-- The ASIC configuration selected through the new SKU's `sai.profile` will disagree with the PORT table, and port creation fails inside syncd.
+- CONFIG_DB does not store the SKU name alone — it also stores a `PORT` table with an entry for every port (name, lanes, speed, alias), all describing the *current* SKU's layout.
 
-The correct approach is to **regenerate the configuration from scratch** for the target SKU — the same thing SONiC does on a factory first boot.
+- Changing only the SKU name creates a three-way mismatch: the SKU field says "new layout," the PORT table still says "old layout," and the ASIC configuration loaded from the new SKU's `sai.profile` expects the new layout. syncd tries to create ports that don't match the PORT table, and port initialization fails.
+
+The correct approach is to **regenerate the entire configuration from scratch** for the target SKU.
 
 ### Switching HwSKU — Step by Step
 
@@ -281,28 +275,31 @@ docker ps                        # swss / syncd / pmon all running
 
 Using the Step 0 backup as a reference, re-apply what still makes sense on the new layout (management settings, users, features, routing config). Port-level settings usually need rethinking since port names and speeds have changed.
 
-### Pitfalls
 
-| Pitfall                                 | What happens | Avoidance |
-|-----------------------------------------|--------------|-----------|
-| Editing only `DEVICE_METADATA.hwsku`    | PORT table still describes the old SKU; syncd fails to create ports         | Always regenerate the full config (Step 2) |
-| Expecting settings to survive           | The new config is factory-fresh; everything custom is gone                  | Back up first (Step 0), re-apply after (Step 6) |
-| Using `config reload` instead of reboot | ASIC may keep the old hardware profile; port creation errors                | Cold reboot (Step 4) |
-| Target SKU folder incomplete            | Boot loops or missing ports                                                 | Verify Step 1; the SKU needs both a port inventory and a matching ASIC config |
-| Config written to a non-persistent path | On platforms where `config_db.json` is a symlink, `cp` may write to a tmpfs; the switch silently reverts on the next reboot | Run `ls -l /etc/sonic/config_db.json` (Step 3); if it's a symlink, copy to the real target |
-| Mismatched cabling expectations         | New layout may renumber or re-lane ports; optics in "removed" ports go dark | Map old → new port names from the two `port_config.ini` files before the window |
+## Dynamic Port Breakout (DPB)
 
-## Quick Reference — Where Everything Is
+Dynamic Port Breakout lets you split or combine individual ports without changing the HwSKU or rebooting. For example, splitting one 400G port into 4×100G, or combining four 25G ports back into one 100G port:
 
-| What                               | Where |
-|------------------------------------|-----------------------------|
-| All hardware definitions (source)  | `sonic-buildimage/device/<vendor>/` |
-| Same, on a running switch          | `/usr/share/sonic/device/<platform>/` |
-| Convenience symlinks on the switch | `/usr/share/sonic/platform` and `/usr/share/sonic/hwsku` (point into the active platform/SKU) |
-| The box's identity                 | `/host/machine.conf` (`onie_platform=`), `show platform summary` |
-| Runtime port config                | CONFIG_DB (`/etc/sonic/config_db.json`, `PORT` table) |
-| Platform chassis definition        | `<platform>/platform.json`, `sensors.conf`, `thermal_policy.json`, ... |
-| Port layout definition             | `<platform>/<HwSKU>/port_config.ini` (+ `hwsku.json`, ASIC config) |
+```
+config interface breakout Ethernet0 "2x200G"
+config interface breakout Ethernet0 "4x100G"
+config interface breakout Ethernet0 "1x400G"      # revert to original
+```
+
+SONiC reads the allowed breakout modes from `platform.json` (which modes the hardware supports) and `hwsku.json` (the default mode per port), updates the PORT table in CONFIG_DB, and reprograms the ASIC — all without a reboot.
+
+### HwSKU Change vs. Dynamic Port Breakout
+
+|                 | HwSKU change                             | Dynamic Port Breakout |
+|-----------------|------------------------------------------|-----------------------|
+| Scope           | Entire port inventory                    | Individual ports      |
+| Config impact   | Full regeneration — custom settings lost | In-place; rest of config untouched |
+| Reboot required | Yes (cold reboot)                        | No                                 |
+| Defined by      | A different SKU folder                   | `platform.json` + `hwsku.json` breakout modes |
+| Typical use     | Repurposing a box (leaf → spine), adopting a vendor-defined alternate layout | Splitting one 400G port into 4×100G |
+
+Rule of thumb: if the layout you want already exists as a SKU folder, switch SKU. If you are adjusting a handful of ports within the current layout, use breakout.
+
 
 ---
 
