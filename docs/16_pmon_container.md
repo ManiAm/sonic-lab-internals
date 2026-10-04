@@ -273,12 +273,13 @@ The daemon also tracks fans that are physically inside the PSU (PSU-internal fan
 **Fan monitoring (every 60 seconds):**
 - Read each fan's speed, target speed, direction, and presence.
 - Detect faults: fan absent, fan stopped, fan running under or over its speed tolerance, fan direction mismatch (mixing intake and exhaust fans is dangerous — it creates internal recirculation instead of proper airflow).
+- Log syslog warnings on state transitions (e.g. "Fan removed warning", "Fan fault warning", "Fan low speed warning") and set individual fan/drawer LEDs to green or red.
 - Update `FAN_INFO` and `FAN_DRAWER_INFO` tables in STATE_DB.
 
 **Temperature monitoring (every 60 seconds):**
 - Read each thermal sensor's temperature and compare against high/low thresholds.
-- Log warnings when thresholds are exceeded.
-- Update `THERMAL_INFO` table in STATE_DB.
+- Log syslog warnings when thresholds are exceeded or when temperature changes too rapidly between cycles.
+- Update `TEMPERATURE_INFO` table in STATE_DB.
 
 **Thermal policy:**
 - The platform vendor provides a thermal policy file (`thermal_policy.json`) and a Python class derived from `ThermalManagerBase`. The policy defines condition–action rules like "if any fan is absent, set all fans to full speed" or "if temperature exceeds the critical threshold, power-cycle the switch."
