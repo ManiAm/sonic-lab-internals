@@ -165,23 +165,18 @@ Ethernet8  8,9,10,11,12,13,14,15  Et2/1   2        400000
 
 ## From Files to a Running Switch — Who Reads What, When
 
-The device folder files are **seeds**, not the runtime state. The flow:
+The device folder files are **seeds**, not the runtime state. They are never read at run time — the running switch gets its configuration from CONFIG_DB (a Redis database). The question is: how do the seeds become CONFIG_DB entries?
 
-```
- EEPROM/ONIE          device folder                     runtime
-┌───────────┐   ┌──────────────────────┐   ┌──────────────────────────────┐
-│ platform  │──>│ platform folder      │──>│ CONFIG_DB  (PORT table etc.) │
-│ string    │   │  └── HwSKU folder    │   │   /etc/sonic/config_db.json  │
-└───────────┘   │      port_config.ini │   └──────────────┬───────────────┘
-                │      *.json.j2 ...   │                  │ swss/orchagent
-                └──────────────────────┘                  v
-                     ASIC config  ───────────────> SAI/syncd -> ASIC
-                     (sai.profile/XML/bcm)
-```
+The [Database Container startup sequence](07_database_container.md#startup-sequence) covers three cold-boot paths. Two of them never touch the seed files at all:
 
-1. **First boot (or config wipe):** `sonic-cfggen` reads the platform string, picks the HwSKU, and renders `port_config.ini` + the `.j2` templates into **CONFIG_DB** (persisted as `/etc/sonic/config_db.json`). See [Configuration Management](19_configuration_management.md) for more on `sonic-cfggen` and CONFIG_DB loading.
-2. **Every boot after that:** CONFIG_DB is the source of truth. The seed files are only consulted again if you change SKU, run a config wipe, or use breakout commands.
-3. **In parallel**, syncd loads the ASIC config named by `sai.profile`. The ASIC's port map and the PORT table must describe the same layout.
+- **Normal reboot** — `/etc/sonic/config_db.json` already exists, so the `postStartAction` hook loads it straight into CONFIG_DB. Done.
+- **Upgrade from an old image** — the old `config_db.json` is copied over and reloaded. The seed files are irrelevant.
+
+The only path that reads the seed files is a **clean first boot** (no existing configuration). On that path, `config-setup` calls `sonic-cfggen`, which auto-discovers `port_config.ini` (or `platform.json` + `hwsku.json`) inside the device folder, builds a complete PORT table from it, and writes `/etc/sonic/config_db.json`. Then `config reload` loads that file into CONFIG_DB.
+
+Once `config_db.json` exists, it is the durable source of truth. The seed files are only consulted again if you wipe the config, change HwSKU, or use breakout commands.
+
+Separately from the CONFIG_DB path, syncd loads the ASIC vendor config named by `sai.profile` directly from the device folder on every boot. The ASIC's port map and the PORT table in CONFIG_DB must describe the same layout — if they disagree, the switch will not forward traffic.
 
 Practical consequence worth remembering: **editing `port_config.ini` on a deployed switch does nothing** until the PORT table is re-generated. To inspect reality, read the runtime:
 

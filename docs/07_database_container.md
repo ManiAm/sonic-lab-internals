@@ -262,7 +262,7 @@ Each container's service script polls for this key before proceeding. Until it a
 
 ### Startup Sequence
 
-The full startup of the database container proceeds through these steps. Steps 1–2 happen inside the container. Steps 3–6 are triggered by the container control script's `postStartAction` hook on the host, which executes commands against the database container. For details on how `postStartAction` fits into the container control script, see [Container Run Time](05_container_run_time.md).
+The full startup of the database container proceeds through these steps, described here for a **cold boot**. Steps 1–2 happen inside the container. Steps 3–6 are triggered by the container control script's `postStartAction` hook on the host, which executes commands against the database container. For details on how `postStartAction` fits into the container control script, see [Container Run Time](05_container_run_time.md).
 
 1. The entrypoint script starts `supervisord`.
 
@@ -270,11 +270,17 @@ The full startup of the database container proceeds through these steps. Steps 1
 
 3. The `postStartAction` hook waits until every Redis instance answers `PING`.
 
-4. On a normal boot, the hook loads `/etc/sonic/config_db.json` into CONFIG_DB using `sonic-cfggen --write-to-db`. On first boot to a new image, the hook sets `CONFIG_DB_INITIALIZED = 0` and defers to the `config-setup` host service.
+4. The hook loads `/etc/sonic/config_db.json` into CONFIG_DB using `sonic-cfggen --write-to-db`, if the file exists.
 
-5. The [database schema migrator](#database-schema-migration) runs, upgrading any entries from older SONiC versions to the current format. On a clean first boot (no prior configuration), this step is skipped because the freshly generated configuration has nothing to migrate.
+5. The hook sets `CONFIG_DB_INITIALIZED = 0` as a safety guard — if any subsequent step crashes, downstream containers stay blocked. Then one of two paths follows:
+   - **Normal boot** (no `pending_config_migration` or `pending_config_initialization` flag files on disk): The [database schema migrator](#database-schema-migration) runs immediately inside the hook, upgrading any entries from older SONiC versions to the current schema. On completion, the hook sets `CONFIG_DB_INITIALIZED = 1`.
+   - **First boot to a new image** (flag files present): The hook defers to the `config-setup` host service.
 
-6. `CONFIG_DB_INITIALIZED` is set to `1`, unblocking every waiting container. On normal boot, the `postStartAction` hook sets this flag. On first boot, `config-setup` sets it after completing initialization or migration.
+6. On first boot, `config-setup` takes over (the flag is still `0`):
+   - **Upgrade from an old image:** `config-setup` copies old configuration files, reloads the config, runs the schema migrator, and then sets `CONFIG_DB_INITIALIZED = 1`.
+   - **Clean first boot:** `config-setup` calls `sonic-cfggen` to read the platform seed files (`platform.json`/`port_config.ini`) and write `/etc/sonic/config_db.json`, then runs `config reload` to load that file into CONFIG_DB, and finally sets `CONFIG_DB_INITIALIZED = 1`. No migration is needed.
+
+   Once `CONFIG_DB_INITIALIZED` reaches `1` (whether set by the hook or by `config-setup`), every waiting container (swss, syncd, etc.) is unblocked.
 
 ```mermaid
 flowchart LR
@@ -290,41 +296,43 @@ flowchart LR
 
     A --> B --> C
     C -- No --> C
-    C -- Yes --> D{First boot?}
+    C -- Yes --> E["Load config_db.json\ninto CONFIG_DB"]
 
-    subgraph s456a ["Steps 4–6 (normal boot)"]
-        E[Load config_db.json\ninto CONFIG_DB]
+    E --> FLAG["Set CONFIG_DB_INITIALIZED = 0"]
+
+    FLAG --> D{"First boot\nto new image?"}
+
+    subgraph s56a ["Steps 5–6 (normal boot, in hook)"]
         F[Run db_migrator]
         G["Set CONFIG_DB_INITIALIZED = 1"]
     end
 
-    D -- No --> E --> F --> G --> H[Other containers\nunblocked]
+    D -- No --> F --> G --> H[Other containers\nunblocked]
 
-    D -- Yes --> D2["Set CONFIG_DB_INITIALIZED = 0\n(defer to config-setup)"]
+    D -- "Yes (defer to config-setup)" --> D3{Upgrade or\nclean install?}
 
-    D2 --> D3{Upgrade or\nclean install?}
-
-    subgraph s456b ["Steps 4–6 (upgrade from old image)"]
+    subgraph s56b ["Steps 5–6 (upgrade, via config-setup)"]
         I[Reload old config]
         J[Run db_migrator]
         K["Set CONFIG_DB_INITIALIZED = 1"]
     end
 
-    subgraph s456c ["Steps 4–6 (clean first boot)"]
-        L[Generate new config\nminigraph / ZTP / factory]
-        M["Set CONFIG_DB_INITIALIZED = 1\n(no migration needed)"]
+    subgraph s56c ["Steps 5–6 (clean first boot, via config-setup)"]
+        L["sonic-cfggen reads seed files\n→ writes config_db.json"]
+        L2["config reload loads\nconfig_db.json into CONFIG_DB"]
+        M["Set CONFIG_DB_INITIALIZED = 1"]
     end
 
     D3 -- Upgrade --> I --> J --> K --> H
-    D3 -- Clean --> L --> M --> H
+    D3 -- Clean --> L --> L2 --> M --> H
 
     style A fill:#e0e0e0,stroke:#333
     style B fill:#e0e0e0,stroke:#333
     style C fill:#fff3cd,stroke:#856404
-    style D fill:#fff3cd,stroke:#856404
-    style D2 fill:#f8d7da,stroke:#721c24
-    style D3 fill:#fff3cd,stroke:#856404
     style E fill:#d4edda,stroke:#155724
+    style FLAG fill:#f8d7da,stroke:#721c24
+    style D fill:#fff3cd,stroke:#856404
+    style D3 fill:#fff3cd,stroke:#856404
     style F fill:#d4edda,stroke:#155724
     style G fill:#d4edda,stroke:#155724
     style H fill:#cce5ff,stroke:#004085
@@ -332,13 +340,14 @@ flowchart LR
     style J fill:#f8d7da,stroke:#721c24
     style K fill:#f8d7da,stroke:#721c24
     style L fill:#e2d5f1,stroke:#6f42c1
+    style L2 fill:#e2d5f1,stroke:#6f42c1
     style M fill:#e2d5f1,stroke:#6f42c1
     style s1 fill:none,stroke:#999,stroke-dasharray:3
     style s2 fill:none,stroke:#999,stroke-dasharray:3
     style s3 fill:none,stroke:#999,stroke-dasharray:3
-    style s456a fill:none,stroke:#28a745,stroke-dasharray:3
-    style s456b fill:none,stroke:#dc3545,stroke-dasharray:3
-    style s456c fill:none,stroke:#6f42c1,stroke-dasharray:3
+    style s56a fill:none,stroke:#28a745,stroke-dasharray:3
+    style s56b fill:none,stroke:#dc3545,stroke-dasharray:3
+    style s56c fill:none,stroke:#6f42c1,stroke-dasharray:3
 ```
 
 ### Database Schema Migration
