@@ -36,21 +36,20 @@ The following is the complete sequence from the moment the user runs `config rel
     - Is the system healthy? Are essential services (database, swss) running?
     - If checks fail, the command aborts with an error.
 
- 3. systemctl stop sonic.target
-    - Systemd stops all SONiC service containers in reverse dependency order.
-    - The database container is NOT part of sonic.target, so Redis
-      stays running throughout the entire process.
-
- 4. CONFIG_DB is flushed — every key is deleted.
-
- 5. New configuration is loaded from the file into CONFIG_DB.
-    - Default: /etc/sonic/config_db.json
-    - Or: user-specified file
-
- 6. Host services are reconfigured
-    - hostname-config, interfaces-config, ntp-config, rsyslog-config
-
- 7. systemctl start sonic.target
+ 3. systemctl stop sonic.target                                                        ─┐
+    - Systemd stops all SONiC service containers in reverse dependency order.           │
+    - The database container is NOT part of sonic.target, so Redis stays running.       │
+                                                                                        │
+ 4. CONFIG_DB is flushed — every key is deleted.                                        │ services
+                                                                                        │ are down;
+ 5. New configuration is loaded from the file into CONFIG_DB.                           │ Redis is
+    - Default: /etc/sonic/config_db.json                                                │ still up
+    - Or: user-specified file                                                           │
+                                                                                        │
+ 6. Host services are reconfigured                                                      │
+    - hostname-config, interfaces-config, ntp-config, rsyslog-config                    │
+                                                                                        │
+ 7. systemctl start sonic.target                                                       ─┘
     - Systemd starts all SONiC service containers in dependency order.
 
  8. Manager daemons inside the containers read CONFIG_DB, configure the

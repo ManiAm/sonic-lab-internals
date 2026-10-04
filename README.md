@@ -31,7 +31,7 @@ Read in order — each document builds on the concepts from the previous ones.
 | 16 | [The PMON Container](docs/16_pmon_container.md) | Platform Monitor — Platform API, vendor plugins, xcvrd, psud, thermalctld, ledd, and hardware monitoring |
 | 17 | [Platform Configuration](docs/17_platform_configuration.md) | The device/ hierarchy, ONIE platform strings, HwSKU folders, port_config.ini, platform.json, and how platform files seed CONFIG_DB |
 | 18 | [Host Services](docs/18_host_services.md) | System health monitoring (healthd), monit, watchdog control, and other host-level systemd services |
-| 19 | [Configuration Management](docs/19_configuration_management.md) | config_db.json, CLI, YANG validation, config save/load |
+| 19 | [Configuration Management](docs/19_configuration_management.md) | config_db.json, CLI, YANG validation, save, load, patch, replace, and reload |
 | 20 | [Config Reload](docs/20_config_reload.md) | CONFIG_DB flush and reload, service stop/start order, delayed service start, config reload vs alternatives |
 | 21 | [Reboot Types](docs/21_reboot_types.md) | Cold, soft, fast, warm, and express reboot comparison |
 | 22 | [Warm Reboot Deep Dive](docs/22_warm_reboot.md) | Pre-shutdown state saving, kexec kernel transition, reconciliation, warmboot-finalizer, container-level warm restart |
