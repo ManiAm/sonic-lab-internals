@@ -208,7 +208,7 @@ flowchart LR
 
 ## Soft Reboot
 
-Soft reboot programs the ASIC from scratch, the same way a cold reboot does. It uses kexec, so firmware POST and the bootloader do not run. Skipping those steps usually saves 30–60 seconds. Use it for a clean restart when that time is the only thing you need to save.
+Soft reboot is identical to cold reboot in every functional sense — the ASIC is reset, Redis starts empty, and the switch is programmed from `config_db.json`. The difference is the boot path: firmware POST and the bootloader are replaced with kexec. Skipping those steps usually saves 30–60 seconds. Use soft reboot when you want a clean restart and that saved time is all you need.
 
 ```bash
 sudo soft-reboot
