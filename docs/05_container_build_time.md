@@ -19,7 +19,7 @@ RUN apt-get install -y gcc iputils-ping
 
 `{{DOCKER_USERNAME}}` and `{{DOCKER_USERTAG}}` are **placeholders** — at build time, the build system replaces them with real values (e.g. the developer's Docker Hub username and a build tag). The `{% if ... %}` block is **conditional logic** — the `gcc` package is only installed when building for ARM architectures, not for x86. After rendering, the build system feeds the resulting plain Dockerfile to `docker build`.
 
-Jinja2 appears constantly in SONiC. The same template can be rendered with different inputs to produce a Broadcom build or a Mellanox build, a single-ASIC unit file or a multi-ASIC one. Keep this in mind: throughout this document and the [runtime document](05_container_run_time.md), whenever you see a `.j2` file, the real file on the switch is the *rendered result* of that template.
+Jinja2 appears constantly in SONiC. The same template can be rendered with different inputs to produce a Broadcom build or a Mellanox build, a single-ASIC unit file or a multi-ASIC one. Keep this in mind: throughout this document and the [runtime document](06_container_run_time.md), whenever you see a `.j2` file, the real file on the switch is the *rendered result* of that template.
 
 ## The Image Hierarchy
 
@@ -139,7 +139,7 @@ RUN chmod 755 /usr/bin/docker-init.sh
 ENTRYPOINT ["/usr/bin/docker-init.sh"]
 ```
 
-Note the split in step 3. The *entrypoint script itself* is rendered at build time, because it depends only on build-time facts. The templates it will use are merely copied in; they get rendered later, on the switch, because they depend on the device's actual configuration. The [runtime document](05_container_run_time.md) picks up that thread.
+Note the split in step 3. The *entrypoint script itself* is rendered at build time, because it depends only on build-time facts. The templates it will use are merely copied in; they get rendered later, on the switch, because they depend on the device's actual configuration. The [runtime document](06_container_run_time.md) picks up that thread.
 
 ## What Else the Build Produces Per Container
 
@@ -150,8 +150,8 @@ Building the image is only half the job. For each container, the build also gene
 | **systemd unit**             | `/usr/lib/systemd/system/<name>.service` | `files/build_templates/[per_namespace/]<name>.service.j2` | Tells systemd how to manage this container |
 | **Container control script** | `/usr/bin/<name>.sh`                     | `files/build_templates/docker_image_ctl.j2` | Runs the actual `docker create` / `start` / `stop` commands |
 
-Both come from templates, so a single source file produces the correct unit and script for every container and every platform. These two files are the bridge from build time to run time, and they are where the [runtime document](05_container_run_time.md) begins.
+Both come from templates, so a single source file produces the correct unit and script for every container and every platform. These two files are the bridge from build time to run time, and they are where the [runtime document](06_container_run_time.md) begins.
 
 ---
 
-**Previous**: [← SONiC Container Architecture](03_sonic_container.md) · **Next**: [Container Run Time →](05_container_run_time.md)
+**Previous**: [← SONiC Container Architecture](04_sonic_container.md) · **Next**: [Container Run Time →](06_container_run_time.md)

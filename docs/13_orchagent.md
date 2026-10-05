@@ -1,8 +1,8 @@
 # Orchagent Deep Dive
 
-> **Prerequisite**: [The SWSS Container](11_swss_container.md) — understand the three process categories (managers, sync daemons, orchagent) and how they interact.
+> **Prerequisite**: [The SWSS Container](12_swss_container.md) — understand the three process categories (managers, sync daemons, orchagent) and how they interact.
 
-Orchagent is the most critical and complex process in SONiC. As shown in the [SWSS container diagram](11_swss_container.md#whats-inside-swss), it sits at the convergence point of both manager daemons and sync daemons — consuming intent from APPL_DB, CONFIG_DB, and STATE_DB, resolving cross-feature dependencies, and programming the ASIC by writing to ASIC_DB through the sairedis library.
+Orchagent is the most critical and complex process in SONiC. As shown in the [SWSS container diagram](12_swss_container.md#whats-inside-swss), it sits at the convergence point of both manager daemons and sync daemons — consuming intent from APPL_DB, CONFIG_DB, and STATE_DB, resolving cross-feature dependencies, and programming the ASIC by writing to ASIC_DB through the sairedis library.
 
 ## How an Orch Works
 
@@ -13,7 +13,7 @@ Orchagent is built from multiple independent modules called **Orchs**. Each Orch
 At startup, each Orch registers:
 - Which **database** to listen to (APPL_DB, CONFIG_DB, etc.)
 - Which **table(s)** to subscribe to
-- Which **IPC pattern** to use — [ConsumerStateTable](10_ipc_mechanisms.md#pattern-4-producerstatetable--consumerstatetable-hash-based) for APPL_DB, [SubscriberStateTable](10_ipc_mechanisms.md#pattern-1-subscriberstatetable-key-space-notifications) for CONFIG_DB
+- Which **IPC pattern** to use — [ConsumerStateTable](11_ipc_mechanisms.md#pattern-4-producerstatetable--consumerstatetable-hash-based) for APPL_DB, [SubscriberStateTable](11_ipc_mechanisms.md#pattern-1-subscriberstatetable-key-space-notifications) for CONFIG_DB
 
 ```cpp
 // Simplified example from orch.cpp
@@ -30,7 +30,7 @@ The Orch base class wraps the IPC mechanism into a **Consumer** object. The Cons
 
 ### 3. Task Queue (m_toSync)
 
-When new messages arrive, the Consumer places them in a **task queue** called `m_toSync`. Each entry is a [`KeyOpFieldsValuesTuple`](10_ipc_mechanisms.md#the-common-message-format) — the common message format shared by every IPC consumer in `swsscommon`.
+When new messages arrive, the Consumer places them in a **task queue** called `m_toSync`. Each entry is a [`KeyOpFieldsValuesTuple`](11_ipc_mechanisms.md#the-common-message-format) — the common message format shared by every IPC consumer in `swsscommon`.
 
 The queue is a `std::multimap<std::string, KeyOpFieldsValuesTuple>`, keyed by the table entry key. A multimap (rather than a plain map) allows multiple operations on the same key to coexist — for example, a `DEL` followed by a `SET` on the same route.
 
@@ -137,7 +137,7 @@ sai_status_t status = sai_route_api->create_route_entry(&route_entry, 1, &attr);
 
 These calls do not reach the ASIC directly. The **sairedis** library serializes each SAI call into a Redis entry in ASIC_DB. The syncd process in the SYNCD container reads those entries and executes the actual vendor SDK calls against the hardware.
 
-> For the full details on sairedis serialization, syncd processing, and error handling, see [SAI and the Syncd Container](13_sai_and_syncd.md).
+> For the full details on sairedis serialization, syncd processing, and error handling, see [SAI and the Syncd Container](14_sai_and_syncd.md).
 
 ## Batch Processing and EntityBulker
 
@@ -153,7 +153,7 @@ When the main select loop wakes orchagent, each Orch's Consumer calls `pops()` t
 /usr/bin/orchagent -d /var/log/swss -b 1024 -s
 ```
 
-This means `RouteOrch::doTask()` receives up to 1,024 routes in a single invocation. Without this flag, the consumer would drain entries one at a time (or at the `DEFAULT_POP_BATCH_SIZE` of 128 defined in [ConsumerStateTable](10_ipc_mechanisms.md#pattern-4-producerstatetable--consumerstatetable-hash-based)).
+This means `RouteOrch::doTask()` receives up to 1,024 routes in a single invocation. Without this flag, the consumer would drain entries one at a time (or at the `DEFAULT_POP_BATCH_SIZE` of 128 defined in [ConsumerStateTable](11_ipc_mechanisms.md#pattern-4-producerstatetable--consumerstatetable-hash-based)).
 
 ### EntityBulker — Deferring SAI Calls
 
@@ -196,7 +196,7 @@ Orchagent has a **dedicated notification thread** (separate from the main select
 | Queue PFC deadlock | PFC watchdog detection |
 | BFD session state  | BFD up/down transition |
 
-These arrive via [NotificationConsumer](10_ipc_mechanisms.md#pattern-2-notificationconsumer--notificationproducer) and are processed in a separate thread to avoid blocking the main orchestration loop.
+These arrive via [NotificationConsumer](11_ipc_mechanisms.md#pattern-2-notificationconsumer--notificationproducer) and are processed in a separate thread to avoid blocking the main orchestration loop.
 
 ```
 orchagent notification thread consumes the event
@@ -417,4 +417,4 @@ These Orchs track resource usage, protocol health, and mirror traffic for analys
 
 ---
 
-**Previous**: [← The SWSS Container](11_swss_container.md) · **Next**: [SAI and Syncd →](13_sai_and_syncd.md)
+**Previous**: [← The SWSS Container](12_swss_container.md) · **Next**: [SAI and Syncd →](14_sai_and_syncd.md)

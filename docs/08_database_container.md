@@ -35,13 +35,13 @@ A single instance works, but it has fundamental limitations: all databases share
 
 - **Independent configuration.** Each instance can have different memory limits, different persistence policies, and different eviction behavior. For example, COUNTERS_DB needs no persistence, while APPL_DB and ASIC_DB need AOF enabled for [warm reboot](#persistence-and-warm-reboot).
 
-- **Lua script isolation.** Redis executes Lua scripts atomically — no other command can run on the same instance while a script is in progress. Several IPC patterns in SONiC rely on Lua scripts for atomicity (see [IPC Mechanisms](10_ipc_mechanisms.md)). Keeping unrelated databases on separate instances means a long-running Lua script on one instance does not block operations on another.
+- **Lua script isolation.** Redis executes Lua scripts atomically — no other command can run on the same instance while a script is in progress. Several IPC patterns in SONiC rely on Lua scripts for atomicity (see [IPC Mechanisms](11_ipc_mechanisms.md)). Keeping unrelated databases on separate instances means a long-running Lua script on one instance does not block operations on another.
 
 ## Logical Databases
 
 Each Redis instance hosts one or more **logical databases**. A logical database is a numbered namespace within a Redis instance — keys in database 0 are separate from keys in database 4, even though both live on the same server process. SONiC assigns human-readable names to these namespaces.
 
-The table below is the complete list of every logical database defined in SONiC, grouped by category. The next document — [Core Redis Databases](08_redis_databases.md) — takes the core databases from this list and explains each one in depth: what it stores, who writes to it, who reads from it, and how it fits into the data pipeline.
+The table below is the complete list of every logical database defined in SONiC, grouped by category. The next document — [Core Redis Databases](09_redis_databases.md) — takes the core databases from this list and explains each one in depth: what it stores, who writes to it, who reads from it, and how it fits into the data pipeline.
 
 | DB ID | Name               | Group       | Purpose |
 |-------|--------------------|-------------|---------|
@@ -240,13 +240,13 @@ Each instance differs in four things:
 | `--pidfile`    | Each instance writes a different PID file     |
 | `--dir`        | Each instance persists data (RDB/AOF) to a different directory |
 
-The supervisord config itself is rendered at startup from a Jinja2 template (`supervisord.conf.j2`), as described in [Inside a Running Container](06_inside_a_running_container.md). The template iterates over the instances defined in `database_config.json` to generate one `[program:redis*]` entry per instance — so the number of `redis-server` processes launched is driven entirely by the config file. Adding or removing an instance is a configuration change, not a code change.
+The supervisord config itself is rendered at startup from a Jinja2 template (`supervisord.conf.j2`), as described in [Inside a Running Container](07_inside_a_running_container.md). The template iterates over the instances defined in `database_config.json` to generate one `[program:redis*]` entry per instance — so the number of `redis-server` processes launched is driven entirely by the config file. Adding or removing an instance is a configuration change, not a code change.
 
 ## Startup and Readiness
 
 With the structure of the database container established — its Redis instances, logical databases, key conventions, and configuration file — this section describes how the container starts and signals readiness to the rest of the system.
 
-The database container occupies a special position in SONiC's startup sequence. As described in [Container Run Time](05_container_run_time.md), most containers belong to the `sonic.target` service group. The database container does not — its systemd unit is tied to `multi-user.target` and depends only on `docker.service`, so it starts as part of ordinary Linux system startup, well before any SONiC container.
+The database container occupies a special position in SONiC's startup sequence. As described in [Container Run Time](06_container_run_time.md), most containers belong to the `sonic.target` service group. The database container does not — its systemd unit is tied to `multi-user.target` and depends only on `docker.service`, so it starts as part of ordinary Linux system startup, well before any SONiC container.
 
 Every other container's systemd unit declares `Requires=database.service` and `After=database.service`. This means no container can start until the database container is running.
 
@@ -262,7 +262,7 @@ Each container's service script polls for this key before proceeding. Until it a
 
 ### Startup Sequence
 
-The full startup of the database container proceeds through these steps, described here for a **cold boot**. Steps 1–2 happen inside the container. Steps 3–6 are triggered by the container control script's `postStartAction` hook on the host, which executes commands against the database container. For details on how `postStartAction` fits into the container control script, see [Container Run Time](05_container_run_time.md).
+The full startup of the database container proceeds through these steps, described here for a **cold boot**. Steps 1–2 happen inside the container. Steps 3–6 are triggered by the container control script's `postStartAction` hook on the host, which executes commands against the database container. For details on how `postStartAction` fits into the container control script, see [Container Run Time](06_container_run_time.md).
 
 1. The entrypoint script starts `supervisord`.
 
@@ -389,7 +389,7 @@ Not every database needs persistence. CONFIG_DB is always recoverable from `/etc
 
 ### redis-cli
 
-[`redis-cli`](https://github.com/ManiAm/sonic-lab-redis/blob/master/docs/01_redis.md#redis-cli) is the command-line interface for interacting with a Redis server. It is available inside every SONiC container and on the host. Since all containers share the Redis Unix sockets (as described in [Container Communication](09_container_communication.md)), you can run `redis-cli` from anywhere on the system. To use `redis-cli`, you need two pieces of information:
+[`redis-cli`](https://github.com/ManiAm/sonic-lab-redis/blob/master/docs/01_redis.md#redis-cli) is the command-line interface for interacting with a Redis server. It is available inside every SONiC container and on the host. Since all containers share the Redis Unix sockets (as described in [Container Communication](10_container_communication.md)), you can run `redis-cli` from anywhere on the system. To use `redis-cli`, you need two pieces of information:
 
 - **Which instance** the database lives on — specified by port (`-p`) or Unix socket (`-s`).
 - **Which logical database** within that instance — specified by its numeric ID (`-n`).
@@ -435,4 +435,4 @@ sonic-db-cli COUNTERS_DB HGETALL "COUNTERS:oid:0x1000000000012"
 
 ---
 
-**Previous**: [← Inside a Running Container](06_inside_a_running_container.md) · **Next**: [Core Redis Databases →](08_redis_databases.md)
+**Previous**: [← Inside a Running Container](07_inside_a_running_container.md) · **Next**: [Core Redis Databases →](09_redis_databases.md)

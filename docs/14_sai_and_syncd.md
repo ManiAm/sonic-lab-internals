@@ -1,6 +1,6 @@
 # SAI and the Syncd Container
 
-> **Prerequisite**: [Orchagent Deep Dive](12_orchagent.md) — understand how orchagent makes SAI calls through the sairedis library.
+> **Prerequisite**: [Orchagent Deep Dive](13_orchagent.md) — understand how orchagent makes SAI calls through the sairedis library.
 
 SAI (Switch Abstraction Interface) is what makes SONiC vendor-independent. It defines a standard API for programming switch ASICs, regardless of which silicon vendor manufactured the chip. The syncd container is the process that executes these SAI calls against the actual hardware.
 
@@ -278,4 +278,4 @@ SAI defines APIs for many object types. Here are the main categories:
 
 ---
 
-**Previous**: [← Orchagent Deep Dive](12_orchagent.md) · **Next**: [The BGP Container and FRR →](14_bgp_container.md)
+**Previous**: [← Orchagent Deep Dive](13_orchagent.md) · **Next**: [The BGP Container and FRR →](15_bgp_container.md)

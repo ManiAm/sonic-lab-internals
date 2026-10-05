@@ -2,7 +2,7 @@
 
 The BGP container runs the routing stack in SONiC. Despite its name, it handles more than just BGP — it runs the full FRRouting (FRR) suite, which supports BGP, OSPF, IS-IS, static routes, and more.
 
-> **Prerequisite**: [SAI and Syncd](13_sai_and_syncd.md) — understand SAI, syncd, and how SONiC programs the ASIC.
+> **Prerequisite**: [SAI and Syncd](14_sai_and_syncd.md) — understand SAI, syncd, and how SONiC programs the ASIC.
 
 ## FRRouting (FRR)
 
@@ -222,4 +222,4 @@ SONiC cannot use the standard off-the-shelf FRR because it needs custom integrat
 
 ---
 
-**Previous**: [← SAI and Syncd](13_sai_and_syncd.md) · **Next**: [The BGP Route-Download Benchmark →](15_benchmark.md)
+**Previous**: [← SAI and Syncd](14_sai_and_syncd.md) · **Next**: [The BGP Route-Download Benchmark →](16_benchmark.md)

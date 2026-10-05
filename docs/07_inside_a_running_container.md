@@ -1,6 +1,6 @@
 # Inside a Running Container
 
-This document covers what happens inside a SONiC container once Docker starts it — how the entrypoint generates runtime configuration, how supervisord manages the daemons, how logging works, and how health monitoring detects failures and triggers recovery. For how containers are started and managed from the host, see [Container Run Time](05_container_run_time.md).
+This document covers what happens inside a SONiC container once Docker starts it — how the entrypoint generates runtime configuration, how supervisord manages the daemons, how logging works, and how health monitoring detects failures and triggers recovery. For how containers are started and managed from the host, see [Container Run Time](06_container_run_time.md).
 
 ## 1. The Entrypoint Script
 
@@ -125,7 +125,7 @@ For this, a container can also declare a list of **watchdog processes** in `/etc
 
 ### From Container Exit to systemd Restart
 
-Recall from the [runtime document](05_container_run_time.md) that `ExecStart` is blocked in `docker wait`. When the container exits, that call returns:
+Recall from the [runtime document](06_container_run_time.md) that `ExecStart` is blocked in `docker wait`. When the container exits, that call returns:
 
 1. `ExecStart` (`swss.sh wait`) returns, so systemd sees the unit stop.
 2. Systemd consults the effective restart policy — `Restart=always` if `auto_restart` is enabled in the FEATURE table, `Restart=no` if it is not.
@@ -234,4 +234,4 @@ Two diagnostic notes. First, `docker ps` showing a container restarting every 30
 
 ---
 
-**Previous**: [← Container Run Time](05_container_run_time.md) · **Next**: [The Database Container →](07_database_container.md)
+**Previous**: [← Container Run Time](06_container_run_time.md) · **Next**: [The Database Container →](08_database_container.md)

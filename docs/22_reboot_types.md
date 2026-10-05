@@ -1,6 +1,6 @@
 # Reboot Types
 
-> **Prerequisites**: [Container Run Time](05_container_run_time.md) (systemd starts services after the kernel boots), [The Database Container](07_database_container.md) (Redis and `config_db.json`), and [SAI and Syncd](13_sai_and_syncd.md) (how software programs the forwarding chip).
+> **Prerequisites**: [Container Run Time](06_container_run_time.md) (systemd starts services after the kernel boots), [The Database Container](08_database_container.md) (Redis and `config_db.json`), and [SAI and Syncd](14_sai_and_syncd.md) (how software programs the forwarding chip).
 
 SONiC can restart a switch in five ways. They differ in two things: how much of the hardware initialization they skip, and how much forwarding state they keep.
 
@@ -134,7 +134,7 @@ The snapshot is trimmed first. Most of STATE_DB is deleted. The script keeps `FD
 
 After Redis loads the snapshot, syncd checks those flags before it chooses a start type. `SONIC_BOOT_TYPE=fast-reboot` counts as a fast boot only when `FAST_RESTART_ENABLE_TABLE|system` is `true`. Warm, fastfast, and express require the warm-restart flags in that same snapshot. The kernel argument and the saved flags have to agree.
 
-If there is no snapshot, the database container loads `/etc/sonic/config_db.json` into CONFIG_DB and the rest of the system builds state from that configuration. That is the cold and soft path. See [The Database Container](07_database_container.md).
+If there is no snapshot, the database container loads `/etc/sonic/config_db.json` into CONFIG_DB and the rest of the system builds state from that configuration. That is the cold and soft path. See [The Database Container](08_database_container.md).
 
 ### BGP Graceful Restart
 
@@ -332,7 +332,7 @@ flowchart LR
 
 On NVIDIA Spectrum switches the same command takes a different internal path. The script sees `asic_type=mellanox`, checks that fast-fast boot is supported, then runs the boxes above as `fastfast-reboot` with `SONIC_BOOT_TYPE=fastfast`. syncd starts with `-t fastfast` (SAI start type 3) only when the warm-restart flags are in the restored snapshot. Pre-shutdown is still `--pre`. `ASIC_DB`, `COUNTERS_DB`, and `FLEX_COUNTER_DB` are flushed before the snapshot, and `FDB_TABLE` is kept. Graceful Restart is still sent. The operator command and the goal — a hitless restart — stay the same.
 
-The reconciliation steps inside each container are in [Warm Reboot Deep Dive](22_warm_reboot.md).
+The reconciliation steps inside each container are in [Warm Reboot Deep Dive](23_warm_reboot.md).
 
 
 
@@ -393,4 +393,4 @@ Fast, warm, and express still need Graceful Restart on the BGP neighbors and LAC
 
 ---
 
-**Previous**: [← Config Reload](20_config_reload.md) · **Next**: [Warm Reboot Deep Dive →](22_warm_reboot.md)
+**Previous**: [← Config Reload](21_config_reload.md) · **Next**: [Warm Reboot Deep Dive →](23_warm_reboot.md)

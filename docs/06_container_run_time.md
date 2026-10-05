@@ -1,6 +1,6 @@
 # Container Run Time: How the Host Manages Containers
 
-This document covers the host-side machinery that manages SONiC containers — how systemd starts them, how the two layers of shell scripts create and control them, and how the FEATURE table lets operators enable, disable, and configure automatic restarts. For how container images are built, see [Container Build Time](04_container_build_time.md). What happens *inside* a running container is covered in [Inside a Running Container](06_inside_a_running_container.md).
+This document covers the host-side machinery that manages SONiC containers — how systemd starts them, how the two layers of shell scripts create and control them, and how the FEATURE table lets operators enable, disable, and configure automatic restarts. For how container images are built, see [Container Build Time](05_container_build_time.md). What happens *inside* a running container is covered in [Inside a Running Container](07_inside_a_running_container.md).
 
 ## 1. How systemd Manages Containers
 
@@ -482,8 +482,8 @@ The template defines two per-container hooks. They are how one generic script se
 
 ### What About Container State?
 
-A common question from beginners: if a container is destroyed and recreated, does it lose its data? The short answer is **no** — all important state lives in Redis, which runs in a separate container with its own persistent storage. When a container restarts, its entrypoint regenerates configuration files from the current contents of Redis (as the [next document](06_inside_a_running_container.md) describes). This is exactly why SONiC uses a database-centric design: containers are disposable, but the state they depend on persists in Redis across restarts.
+A common question from beginners: if a container is destroyed and recreated, does it lose its data? The short answer is **no** — all important state lives in Redis, which runs in a separate container with its own persistent storage. When a container restarts, its entrypoint regenerates configuration files from the current contents of Redis (as the [next document](07_inside_a_running_container.md) describes). This is exactly why SONiC uses a database-centric design: containers are disposable, but the state they depend on persists in Redis across restarts.
 
 ---
 
-**Previous**: [← Container Build Time](04_container_build_time.md) · **Next**: [Inside a Running Container →](06_inside_a_running_container.md)
+**Previous**: [← Container Build Time](05_container_build_time.md) · **Next**: [Inside a Running Container →](07_inside_a_running_container.md)

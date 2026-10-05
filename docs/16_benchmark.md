@@ -1,17 +1,17 @@
 # The BGP Route-Download Benchmark
 
-> **Prerequisite**: [The BGP Container and FRR](14_bgp_container.md) — understand the route journey from BGP peer to ASIC. The pipeline stages referenced in this document (bgpd, zebra, fpmsyncd, orchagent, syncd) are explained in docs [11](11_swss_container.md)–[14](14_bgp_container.md).
+> **Prerequisite**: [The BGP Container and FRR](15_bgp_container.md) — understand the route journey from BGP peer to ASIC. The pipeline stages referenced in this document (bgpd, zebra, fpmsyncd, orchagent, syncd) are explained in docs [12](12_swss_container.md)–[15](15_bgp_container.md).
 
 > All measurements in this document come from a [Celestica Seastone DX010](https://github.com/ManiAm/net-lab-dx010) (Broadcom ASIC) running SONiC 202405 with default settings unless noted otherwise.
 
 
 ## The Route Pipeline — From BGP Peer to ASIC
 
-When a SONiC switch learns a route from a BGP peer, that route does not go straight into hardware. It walks through a long pipeline of processes and databases before it is finally programmed into the ASIC. The full journey is documented in [The BGP Container — The Route's Journey Through SONiC](14_bgp_container.md#the-routes-journey-through-sonic). For quick reference, here is the compact path:
+When a SONiC switch learns a route from a BGP peer, that route does not go straight into hardware. It walks through a long pipeline of processes and databases before it is finally programmed into the ASIC. The full journey is documented in [The BGP Container — The Route's Journey Through SONiC](15_bgp_container.md#the-routes-journey-through-sonic). For quick reference, here is the compact path:
 
 <img src="../pics/opt-path.png" alt="segment" width="1000">
 
-Each stage is covered in an earlier doc: [bgpd, zebra, and fpmsyncd](14_bgp_container.md) handle protocol processing and route selection; [orchagent](12_orchagent.md) translates route intent into SAI hardware operations; [syncd and the vendor SAI](13_sai_and_syncd.md) execute those operations against the ASIC; the intermediate databases (APPL_DB, ASIC_DB) are covered in [Core Redis Databases](08_redis_databases.md).
+Each stage is covered in an earlier doc: [bgpd, zebra, and fpmsyncd](15_bgp_container.md) handle protocol processing and route selection; [orchagent](13_orchagent.md) translates route intent into SAI hardware operations; [syncd and the vendor SAI](14_sai_and_syncd.md) execute those operations against the ASIC; the intermediate databases (APPL_DB, ASIC_DB) are covered in [Core Redis Databases](09_redis_databases.md).
 
 This separation keeps protocol logic independent of any specific hardware, makes the system inspectable at every stage, and lets SONiC run on ASICs from different vendors without changing the layers above SAI. The trade-off is that every hop between layers adds serialization, queueing, and context-switch overhead. When a switch suddenly receives thousands of routes — after a reboot or a peering flap — that cumulative overhead determines how long traffic is forwarded on incomplete information.
 
@@ -19,7 +19,7 @@ This separation keeps protocol logic independent of any specific hardware, makes
 
 Two inter-process communication (IPC) hops around orchagent have the largest impact on pipeline speed:
 
-- **Northbound (fpmsyncd → orchagent):** fpmsyncd writes routes to APPL_DB, and orchagent drains them via Redis subscription in batches of up to 1,024 entries (the `-b` flag default). This is the standard SONiC IPC path ([ProducerStateTable / ConsumerStateTable](10_ipc_mechanisms.md#pattern-4-producerstatetable--consumerstatetable-hash-based)).
+- **Northbound (fpmsyncd → orchagent):** fpmsyncd writes routes to APPL_DB, and orchagent drains them via Redis subscription in batches of up to 1,024 entries (the `-b` flag default). This is the standard SONiC IPC path ([ProducerStateTable / ConsumerStateTable](11_ipc_mechanisms.md#pattern-4-producerstatetable--consumerstatetable-hash-based)).
 
 - **Southbound (orchagent → syncd):** orchagent does not write one route at a time to ASIC_DB. Instead, its EntityBulker collects SAI operations and flushes them in bulk. The bulk size is the `-k` flag; this platform omits it, so the default of 1,000 applies. It also runs synchronous mode (`-s`): after each bulk flush, orchagent blocks until syncd acknowledges the result, so programming errors surface immediately as return codes.
 
@@ -93,13 +93,13 @@ Each route is 38–114 µs apart. Routes accumulate in APPL_DB far faster than t
 
 Orchagent's `ConsumerStateTable` receives a Redis notification that new routes are available. It calls `pops()` to drain up to **1,024 entries** from APPL_DB in one batch. `RouteOrch::doTask()` iterates through all 1,024 entries, collecting the SAI route-create operations into an `EntityBulker` — a buffer that defers actual SAI calls until the batch is complete. This is **the first point of batching** in the pipeline.
 
-> For a full explanation, see [Orchagent — Batch Processing and EntityBulker](12_orchagent.md#batch-processing-and-entitybulker).
+> For a full explanation, see [Orchagent — Batch Processing and EntityBulker](13_orchagent.md#batch-processing-and-entitybulker).
 
 #### orchagent → ASIC_DB
 
 At the end of `doTask()`, `EntityBulker::flush()` fires. The sairedis library serializes the route operations into `BULK_CREATE` entries on ASIC_DB. This run used the stock command line (`-b 1024`, no `-k`), so the SAI bulk size stayed at its default of 1,000. Each 1,024-route orchagent batch therefore produced **two** ASIC_DB writes: one bulk of 1,000 routes and one bulk of the remaining 24.
 
-> Both numbers are orchagent options, at different layers. `-b` is how many APPL_DB entries one `doTask()` drains. `-k` is how many of those entries go into one SAI bulk call (default 1,000 when omitted). This measurement did not pass `-k`, so the 1,000 + 24 split is what the DX010 actually did. See [The SAI Bulk Size](12_orchagent.md#the-sai-bulk-size--k-flag).
+> Both numbers are orchagent options, at different layers. `-b` is how many APPL_DB entries one `doTask()` drains. `-k` is how many of those entries go into one SAI bulk call (default 1,000 when omitted). This measurement did not pass `-k`, so the 1,000 + 24 split is what the DX010 actually did. See [The SAI Bulk Size](13_orchagent.md#the-sai-bulk-size--k-flag).
 
 #### ASIC_DB → syncd
 
@@ -295,9 +295,9 @@ The DX010 baseline measured above is a conservative starting point. SONiC expose
 
 ### 1. Switch the Northbound IPC from Redis to ZMQ
 
-**What it is.** By default, fpmsyncd writes routes to APPL_DB using [ProducerStateTable](10_ipc_mechanisms.md#pattern-4-producerstatetable--consumerstatetable-hash-based), and orchagent reads them using `ConsumerStateTable`. Both sides go through Redis: the producer stages data in a Redis hash, publishes a notification on a Redis channel, and the consumer receives the notification and pops the data from Redis. Every route passes through Redis twice — once on the write side, once on the read side.
+**What it is.** By default, fpmsyncd writes routes to APPL_DB using [ProducerStateTable](11_ipc_mechanisms.md#pattern-4-producerstatetable--consumerstatetable-hash-based), and orchagent reads them using `ConsumerStateTable`. Both sides go through Redis: the producer stages data in a Redis hash, publishes a notification on a Redis channel, and the consumer receives the notification and pops the data from Redis. Every route passes through Redis twice — once on the write side, once on the read side.
 
-**What ZMQ changes.** [ZmqProducerStateTable / ZmqConsumerStateTable](10_ipc_mechanisms.md#pattern-5-zmqproducerstatetable--zmqconsumerstatetable-zmq-based) replaces the Redis notification path with a direct ZeroMQ socket between fpmsyncd and orchagent. The route data travels program-to-program over a TCP socket, skipping the Redis pub/sub layer. Redis can still be used for persistence (so the data is inspectable in APPL_DB), but the critical wake-up-and-deliver path no longer depends on it.
+**What ZMQ changes.** [ZmqProducerStateTable / ZmqConsumerStateTable](11_ipc_mechanisms.md#pattern-5-zmqproducerstatetable--zmqconsumerstatetable-zmq-based) replaces the Redis notification path with a direct ZeroMQ socket between fpmsyncd and orchagent. The route data travels program-to-program over a TCP socket, skipping the Redis pub/sub layer. Redis can still be used for persistence (so the data is inspectable in APPL_DB), but the critical wake-up-and-deliver path no longer depends on it.
 
 **Why it helps.** Redis is a general-purpose key-value store — excellent for inspectability and persistence, but not optimized for high-throughput message delivery between two processes on the same machine. ZMQ is built specifically for low-latency, high-throughput inter-process messaging. Removing Redis from the notification path eliminates its serialization overhead, its single-threaded event loop as a bottleneck, and the extra network hop through the Redis TCP socket. The effect is most visible when the ASIC is fast enough that Redis overhead — not hardware programming — becomes the limiting factor.
 
@@ -339,7 +339,7 @@ The DX010 baseline measured above is a conservative starting point. SONiC expose
 
 **Trade-offs.** Async mode increases throughput but **sacrifices error visibility**. If a single route fails to program (e.g., the ASIC table is full), syncd crashes, which restarts the entire SYNCD container and forces a full reconciliation of all programmed state — a much more disruptive event than a single error handled gracefully in sync mode. Operators choosing async mode must accept this trade-off and have monitoring in place to detect syncd crashes.
 
-For a detailed explanation of both modes, including the error-handling behavior, see [SAI and Syncd — Async vs. Sync Mode](13_sai_and_syncd.md#async-vs-sync-mode).
+For a detailed explanation of both modes, including the error-handling behavior, see [SAI and Syncd — Async vs. Sync Mode](14_sai_and_syncd.md#async-vs-sync-mode).
 
 ### 5. ASIC Hardware and Vendor SAI
 
@@ -363,4 +363,4 @@ For a detailed explanation of both modes, including the error-handling behavior,
 
 ---
 
-**Previous**: [← The BGP Container and FRR](14_bgp_container.md) · **Next**: [The PMON Container →](16_pmon_container.md)
+**Previous**: [← The BGP Container and FRR](15_bgp_container.md) · **Next**: [The PMON Container →](17_pmon_container.md)

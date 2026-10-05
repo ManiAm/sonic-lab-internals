@@ -1,8 +1,8 @@
 # Warm Reboot Deep Dive
 
-> **Prerequisites**: [Reboot Types](21_reboot_types.md) (comparison of cold, fast, and warm reboot), [The Database Container](07_database_container.md) (Redis persistence and AOF), [SAI and Syncd](13_sai_and_syncd.md) (VID/RID mappings and the SAI meta layer), and [Orchagent Deep Dive](12_orchagent.md) (how orchagent processes state from APPL_DB to ASIC_DB).
+> **Prerequisites**: [Reboot Types](22_reboot_types.md) (comparison of cold, fast, and warm reboot), [The Database Container](08_database_container.md) (Redis persistence and AOF), [SAI and Syncd](14_sai_and_syncd.md) (VID/RID mappings and the SAI meta layer), and [Orchagent Deep Dive](13_orchagent.md) (how orchagent processes state from APPL_DB to ASIC_DB).
 
-[Reboot Types](21_reboot_types.md) introduced the five reboot types and summarized what each one does. This document goes deeper into **warm reboot** — the most complex reboot path in SONiC. It covers the full lifecycle: what happens before shutdown, how the kernel transitions, how each layer restores and reconciles state after boot, and how the system knows that warm reboot is complete.
+[Reboot Types](22_reboot_types.md) introduced the five reboot types and summarized what each one does. This document goes deeper into **warm reboot** — the most complex reboot path in SONiC. It covers the full lifecycle: what happens before shutdown, how the kernel transitions, how each layer restores and reconciles state after boot, and how the system knows that warm reboot is complete.
 
 ## The Core Idea
 
@@ -104,7 +104,7 @@ CONFIG_DB  — contains the operator's configuration (recoverable from config_db
               persisting it avoids reloading from disk)
 ```
 
-The script then forces a `BGSAVE` or AOF rewrite to flush all pending writes to disk. This ensures the on-disk files reflect the exact state at shutdown time. See [Persistence and Warm Reboot](07_database_container.md#persistence-and-warm-reboot) for how AOF works.
+The script then forces a `BGSAVE` or AOF rewrite to flush all pending writes to disk. This ensures the on-disk files reflect the exact state at shutdown time. See [Persistence and Warm Reboot](08_database_container.md#persistence-and-warm-reboot) for how AOF works.
 
 ### Step 4: BGP Graceful Restart
 
@@ -134,7 +134,7 @@ What gets saved:
 
 | Saved State | Purpose |
 |-------------|---------|
-| **VID↔RID mapping table** | Maps SONiC's Virtual IDs to the ASIC's Real IDs. Without this, the new syncd would not know which SAI objects correspond to which hardware entries. See [VID and RID](13_sai_and_syncd.md#virtual-ids-and-real-ids). |
+| **VID↔RID mapping table** | Maps SONiC's Virtual IDs to the ASIC's Real IDs. Without this, the new syncd would not know which SAI objects correspond to which hardware entries. See [VID and RID](14_sai_and_syncd.md#virtual-ids-and-real-ids). |
 | **SAI object tree** | The complete tree of SAI objects (switches, ports, routes, neighbors, next-hop groups, ACLs, etc.) and their attributes as last known. |
 | **SAI meta layer state** | The meta layer's internal bookkeeping — reference counts, attribute records — needed to resume validation of future SAI operations. |
 
@@ -535,4 +535,4 @@ If any service shows a state other than `reconciled`, check the syslog for error
 
 ---
 
-**Previous**: [← Reboot Types](21_reboot_types.md) · **Next**: [State Interactions →](23_state_interactions.md)
+**Previous**: [← Reboot Types](22_reboot_types.md) · **Next**: [State Interactions →](24_state_interactions.md)
