@@ -1,6 +1,6 @@
 # Inter-Process Communication (IPC) Mechanisms
 
-Inter-process communication (IPC) refers to the methods that separate programs use to exchange data. In SONiC, each container runs its own set of daemons, and those daemons coordinate by reading from and writing to Redis. [Container Communication](10_container_communication.md) established three key facts:
+Inter-process communication (IPC) refers to the methods that separate programs use to exchange data. In SONiC, each container runs its own set of daemons, and those daemons coordinate by reading from and writing to Redis. [Container Communication](09_container_communication.md) established three key facts:
 
 1. All container-to-container communication goes through Redis.
 
@@ -24,7 +24,7 @@ Understanding these patterns helps you answer a critical debugging question: *"I
 
 ## The Software Stack
 
-Before examining the five patterns, it helps to see the layers they are built on. Recall from [The Image Hierarchy](05_container_build_time.md#the-image-hierarchy) that all containers inherit from `docker-config-engine`, which includes `swsscommon` — so every container has these libraries available out of the box:
+Before examining the five patterns, it helps to see the layers they are built on. Recall from [The Image Hierarchy](04_container_build_time.md#the-image-hierarchy) that all containers inherit from `docker-config-engine`, which includes `swsscommon` — so every container has these libraries available out of the box:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -61,7 +61,7 @@ The following descriptions walk from the lowest layer (Redis) upward through the
 
 ### The Table Concept
 
-Redis has no native concept of a table. SONiC encodes structure into the Redis key string using a **table name**, a **key**, and optional **sub-keys** joined by a separator character. This convention is covered in detail in [Key Structure and Separators](08_database_container.md#key-structure-and-separators).
+Redis has no native concept of a table. SONiC encodes structure into the Redis key string using a **table name**, a **key**, and optional **sub-keys** joined by a separator character. This convention is covered in detail in [Key Structure and Separators](07_database_container.md#key-structure-and-separators).
 
 Beyond grouping related Redis keys, the table name also serves as:
 
@@ -271,7 +271,7 @@ sequenceDiagram
 - A Redis set stores each member only once, and writing to a hash overwrites any previous value for the same field. If multiple updates arrive for the same key before the consumer processes them, only the latest field-values survive.
 
 **Advantages**:
-- **Natural deduplication**: Because the staging structures collapse repeated writes to the same key, a thousand rapid changes produce one unit of work for the consumer. This is the pattern that solves the [churn problem](10_container_communication.md#where-raw-redis-falls-short) described in the previous document.
+- **Natural deduplication**: Because the staging structures collapse repeated writes to the same key, a thousand rapid changes produce one unit of work for the consumer. This is the pattern that solves the [churn problem](09_container_communication.md#where-raw-redis-falls-short) described in the previous document.
 - **Supports multiple tables** from multiple producers simultaneously — each table has its own key set and temp hashes, so they coexist without interference.
 - Less JSON serialization compared to Pattern 3, since field-value pairs are stored natively in Redis hashes.
 
@@ -350,7 +350,7 @@ sequenceDiagram
 
 ## Practical Example: Port Shutdown Flow
 
-When you run `config interface shutdown Ethernet0`, the command travels through the entire pipeline, crossing multiple IPC patterns along the way. This is the same flow shown in [Data Flow Example: Configuring a Port](09_redis_databases.md#data-flow-example-configuring-a-port), but here the emphasis is on the IPC pattern at each hop rather than the databases:
+When you run `config interface shutdown Ethernet0`, the command travels through the entire pipeline, crossing multiple IPC patterns along the way. This is the same flow shown in [Data Flow Example: Configuring a Port](08_redis_databases.md#data-flow-example-configuring-a-port), but here the emphasis is on the IPC pattern at each hop rather than the databases:
 
 ```mermaid
 %%{init: {'sequence': {'mirrorActors': false}}}%%
@@ -387,4 +387,4 @@ This example illustrates two important points. First, a single user action can t
 
 ---
 
-**Previous**: [← Container Communication](10_container_communication.md) · **Next**: [The SWSS Container →](12_swss_container.md)
+**Previous**: [← Container Communication](09_container_communication.md) · **Next**: [The SWSS Container →](11_swss_container.md)

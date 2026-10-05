@@ -2,7 +2,7 @@
 
 The SWSS (Switch State Service) container is the **heart of SONiC's control plane**. It hosts the processes that bridge between applications (routing, configuration) and the hardware (ASIC). If the database container is SONiC's backbone, SWSS is its brain.
 
-> **Prerequisites**: [Core Redis Databases](09_redis_databases.md) (CONFIG_DB, APPL_DB, ASIC_DB roles) and [IPC Mechanisms](11_ipc_mechanisms.md) (the five messaging patterns). This document references Pattern 1 (SubscriberStateTable) and Pattern 4 (ProducerStateTable) by name.
+> **Prerequisites**: [Core Redis Databases](08_redis_databases.md) (CONFIG_DB, APPL_DB, ASIC_DB roles) and [IPC Mechanisms](10_ipc_mechanisms.md) (the five messaging patterns). This document references Pattern 1 (SubscriberStateTable) and Pattern 4 (ProducerStateTable) by name.
 
 ## What's Inside SWSS
 
@@ -44,7 +44,7 @@ Manager daemons handle **CONFIG_DB updates** and transform them into operational
 
 ## Sync Daemons (*syncd in SWSS)
 
-> **Note**: Don't confuse these with the `syncd` process in the Syncd container (covered in [SAI and Syncd](14_sai_and_syncd.md)). The naming is unfortunately similar.
+> **Note**: Don't confuse these with the `syncd` process in the Syncd container (covered in [SAI and Syncd](13_sai_and_syncd.md)). The naming is unfortunately similar.
 
 Sync daemons handle **events from the Linux kernel or control-plane daemons**, translating real-time system state into database entries. Each daemon listens to a specific event source — typically a netlink socket for kernel events or a protocol-specific socket such as the FPM socket from FRR's zebra — parses incoming messages into key-value records, and publishes them to APPL_DB or STATE_DB.
 
@@ -71,7 +71,7 @@ Sync daemons that follow the same pattern but run in **other feature containers*
 
 Orchagent is the **single most critical process** in SONiC. It is built from independent modules called `Orchs`, each responsible for a specific feature (ports, routes, ACLs, QoS, etc.). APPL_DB is the primary input — carrying processed configuration from manager daemons and learned state from sync daemons — but many Orchs also subscribe directly to CONFIG_DB and STATE_DB. Orchagent resolves dependencies between network objects, translates the combined intent into SAI (Switch Abstraction Interface) calls, and pushes the resulting SAI objects into ASIC_DB for syncd to program the hardware.
 
-Orchagent is covered in full detail in [Orchagent Deep Dive](13_orchagent.md).
+Orchagent is covered in full detail in [Orchagent Deep Dive](12_orchagent.md).
 
 ## The SWSS Container Start Sequence
 
@@ -94,4 +94,4 @@ When SWSS starts:
 
 ---
 
-**Previous**: [← IPC Mechanisms](11_ipc_mechanisms.md) · **Next**: [Orchagent Deep Dive →](13_orchagent.md)
+**Previous**: [← IPC Mechanisms](10_ipc_mechanisms.md) · **Next**: [Orchagent Deep Dive →](12_orchagent.md)

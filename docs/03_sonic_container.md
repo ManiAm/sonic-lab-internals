@@ -127,12 +127,12 @@ SONiC's container lifecycle splits cleanly into two phases. Confusing them is th
 
 These phases are covered in separate documents:
 
-- **[Container Build Time](05_container_build_time.md)** — how Dockerfiles, the image hierarchy, and the build system produce container images
+- **[Container Build Time](04_container_build_time.md)** — how Dockerfiles, the image hierarchy, and the build system produce container images
 
-- **[Container Run Time](06_container_run_time.md)** — how systemd, the control scripts, and the FEATURE table manage containers from the host
+- **[Container Run Time](05_container_run_time.md)** — how systemd, the control scripts, and the FEATURE table manage containers from the host
 
-- **[Inside a Running Container](07_inside_a_running_container.md)** — entrypoint, supervisord, logging, health monitoring, and failure recovery inside a container
+- **[Inside a Running Container](06_inside_a_running_container.md)** — entrypoint, supervisord, logging, health monitoring, and failure recovery inside a container
 
 ---
 
-**Previous**: [← Image and Boot](03_image_and_boot.md) · **Next**: [Container Build Time →](05_container_build_time.md)
+**Previous**: [← Architecture Overview](02_architecture_overview.md) · **Next**: [Container Build Time →](04_container_build_time.md)

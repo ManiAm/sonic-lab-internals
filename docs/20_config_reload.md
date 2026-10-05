@@ -1,6 +1,6 @@
 # Config Reload
 
-> **Prerequisites**: [Configuration Management](20_configuration_management.md) (CONFIG_DB, config_db.json, and the configuration flow) and [Container Run Time](06_container_run_time.md) (systemd lifecycle and service dependencies).
+> **Prerequisites**: [Configuration Management](19_configuration_management.md) (CONFIG_DB, config_db.json, and the configuration flow) and [Container Run Time](05_container_run_time.md) (systemd lifecycle and service dependencies).
 
 `config reload` replaces the entire running configuration with the contents of a JSON file — by default `/etc/sonic/config_db.json`, or a user-specified file. It stops all SONiC service containers, erases every entry in CONFIG_DB, loads the new file into CONFIG_DB, and restarts the services. Every container re-initializes and the forwarding chip (ASIC) is reprogrammed from scratch.
 
@@ -66,7 +66,7 @@ The following is the complete sequence from the moment the user runs `config rel
     the control plane has re-learned all routes.
 ```
 
-> **Why separate stop and start?** Steps 3 and 7 are intentionally a `stop` then a `start` — not a single `restart`. The CONFIG_DB flush and reload (steps 4–6) must happen while no containers are running but Redis is still available to receive the new data. Keeping the `database` container outside `sonic.target` (see [Container Run Time](06_container_run_time.md)) is what makes this possible.
+> **Why separate stop and start?** Steps 3 and 7 are intentionally a `stop` then a `start` — not a single `restart`. The CONFIG_DB flush and reload (steps 4–6) must happen while no containers are running but Redis is still available to receive the new data. Keeping the `database` container outside `sonic.target` (see [Container Run Time](05_container_run_time.md)) is what makes this possible.
 
 
 ### CONFIG_DB Flush (Step 4)
@@ -158,4 +158,4 @@ How the handoff works:
 
 ---
 
-**Previous**: [← Configuration Management](20_configuration_management.md) · **Next**: [Reboot Types →](22_reboot_types.md)
+**Previous**: [← Configuration Management](19_configuration_management.md) · **Next**: [Reboot Types →](21_reboot_types.md)

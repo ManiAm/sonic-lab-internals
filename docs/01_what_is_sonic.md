@@ -99,7 +99,7 @@ A **container** (SONiC uses Docker) is a lightweight, isolated environment that 
 
 SONiC runs each major subsystem in its own container. For example, the `database` container holds the state shared by all other containers, `swss` turns configuration into instructions for the ASIC, `syncd` programs the ASIC through SAI, and `bgp` runs the routing protocols. Because of this split, you can restart, upgrade, or remove one subsystem without rebuilding the whole system. With SONiC's warm-restart feature, some containers can even restart without interrupting traffic. Later documents cover each container in detail.
 
-> For a deeper look at why SONiC uses containers and the trade-offs involved, see [SONiC Container Architecture](04_sonic_container.md).
+> For a deeper look at why SONiC uses containers and the trade-offs involved, see [SONiC Container Architecture](03_sonic_container.md).
 
 ### Key Features
 

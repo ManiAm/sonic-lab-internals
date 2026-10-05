@@ -1,6 +1,6 @@
 # Host Services
 
-> **Prerequisites**: [Container Run Time](06_container_run_time.md) (how systemd manages SONiC containers), [Core Redis Databases](09_redis_databases.md) (STATE_DB and CONFIG_DB roles), and [The PMON Container](17_pmon_container.md) (the hardware monitoring daemons whose STATE_DB output several host services consume).
+> **Prerequisites**: [Container Run Time](05_container_run_time.md) (how systemd manages SONiC containers), [Core Redis Databases](08_redis_databases.md) (STATE_DB and CONFIG_DB roles), and [The PMON Container](16_pmon_container.md) (the hardware monitoring daemons whose STATE_DB output several host services consume).
 
 SONiC runs most of its functionality inside Docker containers — SWSS, Syncd, BGP, PMON, and so on. But some tasks cannot run inside a container. Checking whether containers themselves are alive, arming a hardware watchdog, setting up host networking, and finalizing a warm reboot all require direct access to the host OS. These tasks are handled by **host-level systemd services** that run directly on the switch, outside of any container.
 
@@ -27,7 +27,7 @@ Several one-shot services run at boot to configure the host environment before o
 
 | Service | What it configures |
 |---------|--------------------|
-| `config-setup` | On a normal boot, the database container's startup hook has already loaded `config_db.json` into CONFIG_DB; `config-setup` simply waits for that to complete. On a first boot or image upgrade, `config-setup` takes over — generating or migrating the configuration and finalizing `CONFIG_DB_INITIALIZED` (see [Database Container — Startup](08_database_container.md#startup-and-readiness)). Either way, all other host config services depend on `config-setup` completing before they start. |
+| `config-setup` | On a normal boot, the database container's startup hook has already loaded `config_db.json` into CONFIG_DB; `config-setup` simply waits for that to complete. On a first boot or image upgrade, `config-setup` takes over — generating or migrating the configuration and finalizing `CONFIG_DB_INITIALIZED` (see [Database Container — Startup](07_database_container.md#startup-and-readiness)). Either way, all other host config services depend on `config-setup` completing before they start. |
 | `hostname-config` | Sets the system hostname from CONFIG_DB `DEVICE_METADATA`. |
 | `interfaces-config` | Configures host-level network interfaces (management port, loopbacks). |
 | `resolv-config` | Writes `/etc/resolv.conf` from CONFIG_DB DNS settings. |
@@ -37,7 +37,7 @@ Several one-shot services run at boot to configure the host environment before o
 | `rsyslog-config` | Configures remote syslog forwarding destinations. |
 | `logrotate-config` | Configures log rotation to prevent disk exhaustion. |
 
-On a `config reload`, many of these are re-triggered as part of the service restart sequence (see [Config Reload](21_config_reload.md)).
+On a `config reload`, many of these are re-triggered as part of the service restart sequence (see [Config Reload](20_config_reload.md)).
 
 
 
@@ -121,7 +121,7 @@ The `show system-health summary` CLI command reads from `SYSTEM_HEALTH_INFO` in 
 
 ### Configuration
 
-Each platform provides a `system_health_monitoring_config.json` file in its [platform directory](18_platform_configuration.md) to tell `healthd` what to skip or customize. For example, the Celestica Seastone DX010:
+Each platform provides a `system_health_monitoring_config.json` file in its [platform directory](17_platform_configuration.md) to tell `healthd` what to skip or customize. For example, the Celestica Seastone DX010:
 
 ```json
 {
@@ -165,14 +165,14 @@ The **watchdog-control** service runs after the SWSS container is up (`After=sws
 
 ## pcie-check
 
-A one-shot service that runs early in boot. It scans the PCIe bus — the high-speed hardware bus that connects the switch ASIC, NICs, and other cards to the CPU — and compares the discovered devices against the platform's expected device list ([`pcie.yaml`](18_platform_configuration.md)). If a device is missing (indicating a PCIe link failure or a hardware fault), it logs an error. This catches hardware problems before they manifest as mysterious container failures later in the boot sequence.
+A one-shot service that runs early in boot. It scans the PCIe bus — the high-speed hardware bus that connects the switch ASIC, NICs, and other cards to the CPU — and compares the discovered devices against the platform's expected device list ([`pcie.yaml`](17_platform_configuration.md)). If a device is missing (indicating a PCIe link failure or a hardware fault), it logs an error. This catches hardware problems before they manifest as mysterious container failures later in the boot sequence.
 
 
 ## warmboot-finalizer
 
 After a warm reboot, the **warmboot-finalizer** service monitors reconciliation progress across all containers. Reconciliation is the process where each container compares its saved pre-reboot state with the current hardware state and re-programs any differences. Each container signals completion by writing to STATE_DB, and the finalizer waits until all containers have finished before disabling warmboot mode. This prevents the system from getting stuck in a half-warm-rebooted state.
 
-For the full warm reboot lifecycle, see [Warm Reboot Deep Dive](23_warm_reboot.md).
+For the full warm reboot lifecycle, see [Warm Reboot Deep Dive](22_warm_reboot.md).
 
 
 ## Maintenance Services
@@ -184,4 +184,4 @@ For the full warm reboot lifecycle, see [Warm Reboot Deep Dive](23_warm_reboot.m
 
 ---
 
-**Previous**: [← Platform Configuration](18_platform_configuration.md) · **Next**: [Configuration Management →](20_configuration_management.md)
+**Previous**: [← Platform Configuration](17_platform_configuration.md) · **Next**: [Configuration Management →](19_configuration_management.md)

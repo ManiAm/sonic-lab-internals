@@ -26,7 +26,7 @@ These two terms describe how a network device divides its responsibilities:
 
 The relationship is straightforward: the control plane programs the data plane. SONiC's entire architecture — the databases, orchestration daemons, and hardware abstraction layers described in the rest of this document — exists to carry user intent from the control plane into the data plane as efficiently and reliably as possible.
 
-> For a deeper treatment including RIB, FIB, and how SONiC maps to traditional routing concepts, see [The BGP Container and FRR](15_bgp_container.md).
+> For a deeper treatment including RIB, FIB, and how SONiC maps to traditional routing concepts, see [The BGP Container and FRR](14_bgp_container.md).
 
 ## The Big Picture
 
@@ -34,9 +34,9 @@ With that context, here is how a SONiC device is structured:
 
 <img src="../pics/sonic-big-picture.png" alt="segment" width="750">
 
-All SONiC containers run in user space. No container communicates with another directly — all structured communication goes through the database container, which runs a Redis in-memory key-value store organized into multiple databases (CONFIG_DB, APPL_DB, ASIC_DB, STATE_DB, COUNTERS_DB). When one container writes state to a Redis table, any container subscribed to that table is notified and reads the update. This decoupled, event-driven design is explained in detail in [Container Communication](10_container_communication.md).
+All SONiC containers run in user space. No container communicates with another directly — all structured communication goes through the database container, which runs a Redis in-memory key-value store organized into multiple databases (CONFIG_DB, APPL_DB, ASIC_DB, STATE_DB, COUNTERS_DB). When one container writes state to a Redis table, any container subscribed to that table is notified and reads the update. This decoupled, event-driven design is explained in detail in [Container Communication](09_container_communication.md).
 
-> Each database is covered in detail in [Core Redis Databases](09_redis_databases.md).
+> Each database is covered in detail in [Core Redis Databases](08_redis_databases.md).
 
 ### Kernel-space Components
 
@@ -56,7 +56,7 @@ Although containers communicate with each other exclusively through Redis, they 
 
 - **Container → Kernel** (writing): Containers can also push state into the kernel. For example, FRR's `zebra` daemon (in the BGP container) installs its best routes into the kernel routing table, and manager daemons bring Linux interfaces up or down in response to CONFIG_DB changes.
 
-This container-to-kernel interaction is covered in more detail in [Container Communication](10_container_communication.md).
+This container-to-kernel interaction is covered in more detail in [Container Communication](09_container_communication.md).
 
 
 ## The Programming Pipeline
@@ -99,8 +99,8 @@ Not everything runs inside containers. Some components run directly on the Linux
 
 These host-level components are the glue that holds the containerized system together. They handle bootstrapping (getting containers started in the right order) and provide the primary operator-facing interface.
 
-Containers also share certain resources with the host. They all mount the Redis socket directory as a shared volume, and most containers run in the host's network namespace (`--net=host`). Both of these mechanisms are explained in [Container Communication](10_container_communication.md). This tight integration between host and containers is what allows SONiC to function as a cohesive system rather than a collection of isolated services.
+Containers also share certain resources with the host. They all mount the Redis socket directory as a shared volume, and most containers run in the host's network namespace (`--net=host`). Both of these mechanisms are explained in [Container Communication](09_container_communication.md). This tight integration between host and containers is what allows SONiC to function as a cohesive system rather than a collection of isolated services.
 
 ---
 
-**Previous**: [← What is SONiC?](01_what_is_sonic.md) · **Next**: [Image and Boot →](03_image_and_boot.md)
+**Previous**: [← What is SONiC?](01_what_is_sonic.md) · **Next**: [SONiC Container Architecture →](03_sonic_container.md)

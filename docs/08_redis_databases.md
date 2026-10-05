@@ -1,6 +1,6 @@
 # Core Redis Databases in SONiC
 
-We introduced all of SONiC's logical databases in a [single reference table](08_database_container.md#logical-databases). This document takes the **core** databases from that list — the ones present on every SONiC system and central to the data pipeline — and explains each one in depth: what it stores, who writes to it, who reads from it, and how data flows between them.
+We introduced all of SONiC's logical databases in a [single reference table](07_database_container.md#logical-databases). This document takes the **core** databases from that list — the ones present on every SONiC system and central to the data pipeline — and explains each one in depth: what it stores, who writes to it, who reads from it, and how data flows between them.
 
 The core databases form a pipeline that transforms user intent into hardware behavior. The [Architecture Overview](02_architecture_overview.md#the-orchestration-pipeline) illustrates this visually — in short: CONFIG_DB (what the user wants) → APPL_DB (what the control plane computed) → ASIC_DB (what the hardware should do).
 
@@ -14,7 +14,7 @@ STATE_DB and COUNTERS_DB sit outside this downward pipeline but form the **upwar
 
 **Who reads**: Manager daemons in the SWSS container (`portmgrd`, `intfmgrd`, `vlanmgrd`, etc.).
 
-**Persistence**: CONFIG_DB can be saved to `/etc/sonic/config_db.json` on disk, but this does **not** happen automatically. The operator must explicitly run `config save` to write the current CONFIG_DB contents to the file. Until then, any changes made at runtime exist only in Redis memory — a reboot without saving will lose them. At startup, the database container loads this file back into CONFIG_DB (see [The Database Container — Startup and Readiness](08_database_container.md#startup-and-readiness)), so the saved file represents the configuration the switch will boot with.
+**Persistence**: CONFIG_DB can be saved to `/etc/sonic/config_db.json` on disk, but this does **not** happen automatically. The operator must explicitly run `config save` to write the current CONFIG_DB contents to the file. Until then, any changes made at runtime exist only in Redis memory — a reboot without saving will lose them. At startup, the database container loads this file back into CONFIG_DB (see [The Database Container — Startup and Readiness](07_database_container.md#startup-and-readiness)), so the saved file represents the configuration the switch will boot with.
 
 **Key format**: `TABLE_NAME|KEY|SUB_KEY` (separator: `|`)
 
@@ -28,15 +28,15 @@ BGP_NEIGHBOR|10.0.0.1               → { "asn": "65001", "name": "spine1" }
 INTERFACE|Ethernet0|10.0.0.2/31     → {}
 ```
 
-> Why does CONFIG_DB use `|` instead of the more conventional `:`? Because CONFIG_DB is persisted to disk as JSON, and JSON uses `:` to separate keys from values. Using `|` avoids ambiguity when parsing the file. For the full explanation of separators across all databases, see [The Database Container — Key Structure and Separators](08_database_container.md#key-structure-and-separators).
+> Why does CONFIG_DB use `|` instead of the more conventional `:`? Because CONFIG_DB is persisted to disk as JSON, and JSON uses `:` to separate keys from values. Using `|` avoids ambiguity when parsing the file. For the full explanation of separators across all databases, see [The Database Container — Key Structure and Separators](07_database_container.md#key-structure-and-separators).
 
 **Key characteristics**:
 
 - Data here is the **desired state** — what the system should look like, not what it currently looks like.
 
-- Changes to CONFIG_DB trigger events that manager daemons pick up and process. The specific notification mechanism (key-space notifications via `SubscriberStateTable`) is covered in [IPC Mechanisms — Pattern 1](11_ipc_mechanisms.md#pattern-1-subscriberstatetable-key-space-notifications).
+- Changes to CONFIG_DB trigger events that manager daemons pick up and process. The specific notification mechanism (key-space notifications via `SubscriberStateTable`) is covered in [IPC Mechanisms — Pattern 1](10_ipc_mechanisms.md#pattern-1-subscriberstatetable-key-space-notifications).
 
-- A YANG check runs in the program that writes CONFIG_DB. Redis itself has no schema. RESTCONF, gNMI, KLISH, `config apply-patch`, and `config replace` check before writing. `config interface`, `config vlan`, `config load`, `sonic-cfggen --write-to-db`, and a direct Redis write store the fields as given. The full comparison is in [Configuration Management — YANG Validation](20_configuration_management.md#yang-validation).
+- A YANG check runs in the program that writes CONFIG_DB. Redis itself has no schema. RESTCONF, gNMI, KLISH, `config apply-patch`, and `config replace` check before writing. `config interface`, `config vlan`, `config load`, `sonic-cfggen --write-to-db`, and a direct Redis write store the fields as given. The full comparison is in [Configuration Management — YANG Validation](19_configuration_management.md#yang-validation).
 
 ## APPL_DB
 
@@ -162,7 +162,7 @@ COUNTERS:oid:0x1000000000003
 
 - Updated periodically at a configurable interval, typically every 1–10 seconds.
 
-- Both read-heavy and write-heavy. In multi-instance deployments, COUNTERS_DB runs on its own Redis instance to prevent counter polling from adding latency to databases on the critical path like CONFIG_DB and APPL_DB. See [The Database Container — Why Use Multiple Instances?](08_database_container.md#why-use-multiple-instances) for details.
+- Both read-heavy and write-heavy. In multi-instance deployments, COUNTERS_DB runs on its own Redis instance to prevent counter polling from adding latency to databases on the critical path like CONFIG_DB and APPL_DB. See [The Database Container — Why Use Multiple Instances?](07_database_container.md#why-use-multiple-instances) for details.
 
 - Does not affect forwarding behavior — purely observational. Counters reflect what has already happened; changing a counter value in Redis has no effect on the ASIC.
 
@@ -261,7 +261,7 @@ The step-by-step details:
 
 5. Hardware counters stop incrementing for this port in **COUNTERS_DB**.
 
-Each step in this flow uses a specific IPC pattern to deliver the notification between producer and consumer. For the exact patterns used at each stage (and how to debug when data gets stuck), see [IPC Mechanisms — Practical Example](11_ipc_mechanisms.md#practical-example-port-shutdown-flow).
+Each step in this flow uses a specific IPC pattern to deliver the notification between producer and consumer. For the exact patterns used at each stage (and how to debug when data gets stuck), see [IPC Mechanisms — Practical Example](10_ipc_mechanisms.md#practical-example-port-shutdown-flow).
 
 ## Summary Table
 
@@ -276,4 +276,4 @@ Each step in this flow uses a specific IPC pattern to deliver the notification b
 
 ---
 
-**Previous**: [← The Database Container](08_database_container.md) · **Next**: [Container Communication →](10_container_communication.md)
+**Previous**: [← The Database Container](07_database_container.md) · **Next**: [Container Communication →](09_container_communication.md)

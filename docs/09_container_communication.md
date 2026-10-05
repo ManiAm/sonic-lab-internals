@@ -124,7 +124,7 @@ This seems straightforward, but it breaks in four ways:
 
 ### The Solution: `swsscommon`
 
-A shared library called **`swsscommon`** solves all these problems. It is included in every container's [base image](05_container_build_time.md#the-image-hierarchy) and is the standard way SONiC daemons communicate through Redis. It connects through the very same Redis Unix socket described in Section 2. It is not an alternative transport, but a layer of code that issues Redis commands with the reliability guarantees that raw Redis lacks.
+A shared library called **`swsscommon`** solves all these problems. It is included in every container's [base image](04_container_build_time.md#the-image-hierarchy) and is the standard way SONiC daemons communicate through Redis. It connects through the very same Redis Unix socket described in Section 2. It is not an alternative transport, but a layer of code that issues Redis commands with the reliability guarantees that raw Redis lacks.
 
 The core idea: instead of delivering updates as transient pub/sub messages, `swsscommon` keeps pending work **in the database as stored state**.
 
@@ -140,7 +140,7 @@ This design directly addresses each of the four problems:
 | Half-written objects | The hand-off — moving fields from staging into the final hash and adding the key to the pending set — runs as a **Lua script inside Redis**. Redis executes Lua scripts atomically, so the object becomes visible all at once or not at all. |
 | Locating data | `swsscommon` reads `database_config.json` at startup and resolves the correct database, socket, key separator, and namespace automatically. No daemon hardcodes these details. |
 
-> The full set of communication patterns built on `swsscommon` — and which one to use when — is covered in [IPC Mechanisms](11_ipc_mechanisms.md).
+> The full set of communication patterns built on `swsscommon` — and which one to use when — is covered in [IPC Mechanisms](10_ipc_mechanisms.md).
 
 ### Clearing Up the Name
 
@@ -160,4 +160,4 @@ Keep these three apart:
 
 ---
 
-**Previous**: [← Core Redis Databases](09_redis_databases.md) · **Next**: [IPC Mechanisms →](11_ipc_mechanisms.md)
+**Previous**: [← Core Redis Databases](08_redis_databases.md) · **Next**: [IPC Mechanisms →](10_ipc_mechanisms.md)
