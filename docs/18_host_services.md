@@ -170,9 +170,7 @@ A one-shot service that runs early in boot. It scans the PCIe bus — the high-s
 
 ## warmboot-finalizer
 
-After a warm reboot, the **warmboot-finalizer** service monitors reconciliation progress across all containers. Reconciliation is the process where each container compares its saved pre-reboot state with the current hardware state and re-programs any differences. Each container signals completion by writing to STATE_DB, and the finalizer waits until all containers have finished before disabling warmboot mode. This prevents the system from getting stuck in a half-warm-rebooted state.
-
-For the full warm reboot lifecycle, see [Warm Reboot Deep Dive](22_warm_reboot.md).
+After a warm reboot, the **warmboot-finalizer** service monitors reconciliation progress and declares warm reboot complete once all critical containers have finished. See [The Warmboot Finalizer](22_warm_reboot.md#the-warmboot-finalizer) for the full details.
 
 
 ## Maintenance Services

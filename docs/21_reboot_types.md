@@ -126,36 +126,50 @@ Cold and soft discard state. Fast, warm, and express keep enough of it for neigh
 
 ### The Redis snapshot
 
-During normal operation Redis is in memory. A reboot wipes that memory. Before a fast, warm, or express reboot, the script calls Redis `SAVE`, which writes `dump.rdb`, and copies that file to `/host/warmboot/`. The `/host` partition is still there after the new kernel starts.
+During normal operation every Redis database lives in memory. A reboot wipes that memory. To preserve state, the reboot script follows three steps before shutting down:
 
-On the next boot the database container sees the matching `SONIC_BOOT_TYPE` and the snapshot file, and it starts Redis by loading `dump.rdb`. Cold and soft reboot rename any leftover snapshot aside and unload a staged kexec kernel, so the next boot cannot accidentally restore it.
+1. **Trim.** The script deletes data that should not survive the reboot. Most of STATE_DB is removed; the script keeps `FDB_TABLE` (learned MAC addresses), the warm-restart flags, and a few other tables such as mirror sessions.
 
-The snapshot is trimmed first. Most of STATE_DB is deleted. The script keeps `FDB_TABLE` (MAC addresses the ASIC has learned), the warm-restart flags, and a few other tables such as mirror sessions. Fast reboot, express reboot, and NVIDIA fastfast also flush `ASIC_DB`, `COUNTERS_DB`, and `FLEX_COUNTER_DB` before the save. Fast reboot also flushes `RESTAPI_DB`. Generic warm reboot leaves `ASIC_DB` in the snapshot: the new syncd uses those SAI object IDs to reconnect to the chip that is still forwarding.
+2. **Save.** Redis persists the trimmed in-memory state to `dump.rdb` on disk inside the database container. The flush and trim operations modify enough keys to trigger Redis's background save, so the file on disk reflects the current state.
 
-After Redis loads the snapshot, syncd checks those flags before it chooses a start type. `SONIC_BOOT_TYPE=fast-reboot` counts as a fast boot only when `FAST_RESTART_ENABLE_TABLE|system` is `true`. Warm, fastfast, and express require the warm-restart flags in that same snapshot. The kernel argument and the saved flags have to agree.
+3. **Copy.** The script copies `dump.rdb` from the database container to `/host/warmboot/`. The `/host` partition sits on the disk, so it is still there after the new kernel starts.
 
-If there is no snapshot, the database container loads `/etc/sonic/config_db.json` into CONFIG_DB and the rest of the system builds state from that configuration. That is the cold and soft path. See [The Database Container](07_database_container.md).
+On the next boot, the database container sees the matching `SONIC_BOOT_TYPE` and the snapshot file, loads `dump.rdb` into Redis, and sets the warm-restart flags. Syncd reads those flags and chooses its start type accordingly — the kernel boot argument and the saved flags must agree.
+
+**What differs between reboot types:**
+
+- **Warm reboot** keeps `ASIC_DB` in the snapshot. The new syncd uses those SAI object IDs to reconnect to the chip, which is still forwarding traffic throughout the restart.
+
+- **Fast reboot, express reboot, and NVIDIA fastfast** flush `ASIC_DB`, `COUNTERS_DB`, and `FLEX_COUNTER_DB` before the save, because the ASIC is reset during reboot. Fast reboot also flushes `RESTAPI_DB`.
+
+- **Cold and soft reboot** do not save a snapshot at all. Any leftover `dump.rdb` is renamed aside and any staged kexec kernel is unloaded so the next boot cannot accidentally restore old state. The database container loads `/etc/sonic/config_db.json` into CONFIG_DB instead, and the rest of the system builds state from that configuration. See [The Database Container](07_database_container.md).
 
 ### BGP Graceful Restart
 
-**Graceful Restart** (RFC 4724) is a BGP signal sent before the routing stack stops. It tells each neighbor: this speaker is restarting; keep the routes you learned from it for the restart interval (commonly about 120 seconds) instead of withdrawing them.
+Before the BGP daemon shuts down, it signals **Graceful Restart (GR)** to all of its peers (RFC 4724). The GR notification tells each peer:
 
-Without that signal, every neighbor would delete the switch's routes as soon as the BGP session closed, and traffic across the network would shift even if this switch's ASIC were still forwarding. With it, neighbors keep forwarding toward the switch until BGP comes back and refreshes the routes.
+> "I am going to restart. Please hold all the routes you learned from me for up to 120 seconds (the restart timer). Do not withdraw them. When I come back, I will re-establish the session and confirm which routes are still valid."
 
-Fast, warm, and express reboot send this signal and depend on neighbors that support it. On NVIDIA switches, warm reboot runs as fastfast and uses the same signal. Cold and soft reboot do not send it: the BGP sessions drop, and neighbors withdraw the routes.
+From the peers' perspective, the SONiC switch's routes remain in their forwarding tables — traffic continues to flow toward the switch. The peers set a timer; if the switch does not return before the timer expires, they withdraw the routes.
+
+This is critical because a non-cold reboot takes time. Without GR, the moment BGP closes its sessions, every peer would immediately withdraw all routes learned from the switch, causing traffic to be rerouted or dropped across the network — even though the switch's own ASIC may still be forwarding correctly.
+
+Fast, warm, and express reboot all send this signal and depend on neighbors that support it. On NVIDIA switches, warm reboot runs as fastfast and uses the same signal. Cold and soft reboot do not send it: the BGP sessions simply drop, and neighbors withdraw the routes immediately.
 
 ### LACP slow mode
 
-A **LAG** (link aggregation group) bundles several physical links. **LACP** keeps the bundle alive by sending periodic messages to the partner switch.
+A **LAG** (Link Aggregation Group) bundles several physical links into one logical interface. **LACP** (Link Aggregation Control Protocol) keeps the bundle alive by exchanging periodic PDUs (Protocol Data Units) with the partner switch. LACP has two speeds:
 
-LACP has two speeds:
+| Mode | PDU interval | Partner declares the link dead after |
+|------|--------------|--------------------------------------|
+| Fast | 1 second     | 3 seconds                            |
+| Slow | 30 seconds   | 90 seconds                           |
 
-| Mode | Message interval | Partner declares the link dead after |
-|------|------------------|--------------------------------------|
-| Fast | 1 second         | 3 seconds                            |
-| Slow | 30 seconds       | 90 seconds                           |
+Fast, warm, and express reboot all take longer than 3 seconds. If a LAG is in fast mode, the partner would declare the member link dead before the switch finishes restarting, and traffic through that LAG would stop. Slow mode gives the switch a 90-second window to restart and rejoin the LAG.
 
-Fast, warm, and express reboot take longer than 3 seconds, so a LAG in fast mode drops during the restart. Slow mode leaves a 90-second window. The reboot script also starts `lag_keepalive.py`, which keeps sending LACP messages through the gap. LAG members used with these reboot types need to be in LACP slow mode.
+Before shutting down, the teamd daemon sends a final LACP PDU to the partner, signaling that the switch is entering a timeout period. The reboot script also starts `lag_keepalive.py`, which continues sending LACP messages through the gap to keep the partner from timing out.
+
+This is why fast, warm, and express reboot **require LACP slow mode** on all LAG interfaces. Cold and soft reboot do not need it: the LAG drops and is rebuilt from scratch.
 
 
 
@@ -167,172 +181,183 @@ Cold reboot is a full restart through firmware. The ASIC is reset, Redis starts 
 sudo reboot
 ```
 
-```mermaid
-flowchart LR
-    A["Shut<br/>down"] --> B["Firmware<br/>POST"] --> C["Bootloader"] --> D["Fresh<br/>Redis"] --> E["ASIC from<br/>scratch"] --> F["BGP<br/>relearn"]
-    style B fill:#d4edda,stroke:#155724
-    style C fill:#d4edda,stroke:#155724
+```
+┌───────────────────────────────────────────────────────────┐
+│ SHUTDOWN                                                  │
+│                                                           │
+│  syncd cold shutdown                                      │
+│  → stop pmon                                              │
+│  → rename any leftover dump.rdb                           │
+│  → unload staged kexec                                    │
+│  → /sbin/reboot                                           │
+└─────────────────────────┬─────────────────────────────────┘
+                          │  firmware POST + bootloader
+                          │  (30–60+ seconds)
+                          v
+┌───────────────────────────────────────────────────────────┐
+│ BOOT (clean start)                                        │
+│                                                           │
+│  GRUB loads kernel (SONIC_BOOT_TYPE is not set)           │
+│  → database container starts with empty Redis             │
+│  → config_db.json loaded into CONFIG_DB                   │
+│  → syncd starts cold (SAI start type 0, ASIC was reset)   │
+│  → orchagent programs ASIC from scratch                   │
+└─────────────────────────┬─────────────────────────────────┘
+                          │
+                          v
+┌───────────────────────────────────────────────────────────┐
+│ NETWORK CONVERGENCE                                       │
+│                                                           │
+│  No Graceful Restart — BGP sessions drop                  │
+│  → neighbors withdraw routes immediately                  │
+│  → new sessions form and routes are learned from scratch  │
+│  → no reconciliation, no warmboot-finalizer               │
+└───────────────────────────────────────────────────────────┘
 ```
 
-**Shut down**
-
-- On most platforms the script asks syncd for a cold shutdown (`syncd_request_shutdown --cold`) and stops the pmon container.
-- Any `dump.rdb` left by an earlier fast, warm, or express reboot is renamed, and a staged kexec kernel is unloaded.
-- The script records the reboot cause and calls `/sbin/reboot`. The kernel and the remaining containers go down with that reset.
-
-**Firmware POST**
-
-- The CPU resets through firmware. Power-on self-test often takes 30–60 seconds, sometimes longer.
-
-**Bootloader**
-
-- GRUB, or the platform bootloader, loads the SONiC kernel from disk.
-- `SONIC_BOOT_TYPE` is not set.
-
-**Fresh Redis**
-
-- systemd starts the database container. Redis is empty.
-- `/etc/sonic/config_db.json` is loaded into CONFIG_DB, and the other containers start from that configuration.
-
-**ASIC from scratch**
-
-- syncd starts with no `-t` flag. That is SAI start type 0, cold.
-- The firmware reset cleared the ASIC. orchagent programs it again from the configuration that was just loaded.
-
-**BGP relearn**
-
-- Graceful Restart is not sent. BGP sessions drop, and neighbors withdraw routes immediately.
-- Sessions form again and routes are learned from scratch.
-
-
+No state is preserved. No snapshot is saved. No reconciliation runs. The system comes up as if it were powered on for the first time.
 
 ## Soft Reboot
 
-Soft reboot is identical to cold reboot in every functional sense — the ASIC is reset, Redis starts empty, and the switch is programmed from `config_db.json`. The difference is the boot path: firmware POST and the bootloader are replaced with kexec. Skipping those steps usually saves 30–60 seconds. Use soft reboot when you want a clean restart and that saved time is all you need.
+Soft reboot is identical to cold reboot in every functional sense — the ASIC is reset, Redis starts empty, and the switch is programmed from `config_db.json`. The only difference is the boot path: firmware POST and the bootloader are replaced with kexec. Skipping those steps usually saves 30–60 seconds.
 
 ```bash
 sudo soft-reboot
 ```
 
-```mermaid
-flowchart LR
-    A["Shut<br/>down"] --> B["kexec"] --> D["Fresh<br/>Redis"] --> E["ASIC from<br/>scratch"] --> F["BGP<br/>relearn"]
-    style B fill:#cce5ff,stroke:#004085
+```
+┌───────────────────────────────────────────────────────────┐
+│ SHUTDOWN                                                  │
+│                                                           │
+│  syncd cold shutdown                                      │
+│  → stop pmon                                              │
+│  → disable warm restart                                   │
+│  → rename any leftover dump.rdb                           │
+│  → unload staged kexec                                    │
+└─────────────────────────┬─────────────────────────────────┘
+                          │  kexec (skips firmware + bootloader)
+                          v
+┌───────────────────────────────────────────────────────────┐
+│ BOOT (clean start)                                        │
+│                                                           │
+│  New kernel boots (SONIC_BOOT_TYPE=soft, treated as cold) │
+│  → database container starts with empty Redis             │
+│  → config_db.json loaded into CONFIG_DB                   │
+│  → syncd starts cold (SAI start type 0, ASIC was reset)   │
+│  → orchagent programs ASIC from scratch                   │
+└─────────────────────────┬─────────────────────────────────┘
+                          │
+                          v
+┌───────────────────────────────────────────────────────────┐
+│ NETWORK CONVERGENCE                                       │
+│                                                           │
+│  No Graceful Restart — BGP sessions drop                  │
+│  → neighbors withdraw routes immediately                  │
+│  → new sessions form and routes are learned from scratch  │
+│  → no reconciliation, no warmboot-finalizer               │
+└───────────────────────────────────────────────────────────┘
 ```
 
-**Shut down**
-
-- On most platforms the script asks syncd for a cold shutdown, then stops pmon.
-- It turns warm-restart off, renames any leftover `dump.rdb`, and unloads a staged kexec kernel.
-- No Redis snapshot is taken. Graceful Restart and LACP keepalive are not used.
-
-**kexec**
-
-- The script loads the next kernel with `SONIC_BOOT_TYPE=soft`, then jumps to it with `kexec -e`.
-- Firmware POST and the bootloader do not run. The new boot treats `soft` as cold, because no startup script has a `soft` branch.
-
-**Fresh Redis**
-
-- systemd starts the database container with empty Redis.
-- `config_db.json` is loaded into CONFIG_DB. This is the same handoff as a cold boot.
-
-**ASIC from scratch**
-
-- syncd is not given `-t`, so the ASIC is programmed as a cold start (SAI start type 0).
-
-**BGP relearn**
-
-- Graceful Restart is not sent. Neighbors withdraw routes, and the sessions are built again.
+The result is the same as cold reboot — a completely clean start. The only advantage is the time saved by skipping firmware POST and the bootloader.
 
 
 
 ## Fast Reboot
 
-Fast reboot resets the ASIC and then restores the saved state, so the switch does not have to relearn the network from scratch. The data-plane target is under 30 seconds. The control-plane target is under 90 seconds, inside the Graceful Restart window. Forwarding stops while the ASIC is reset, and it returns when the saved entries are programmed again.
+Fast reboot resets the ASIC and then restores the saved state, so the switch does not have to relearn the network from scratch. The data-plane target is under 30 seconds. The control-plane target is under 90 seconds, inside the Graceful Restart window. Forwarding stops while the ASIC is reset and resumes when the saved entries are programmed back.
 
 ```bash
 sudo fast-reboot
 ```
 
-```mermaid
-flowchart LR
-    A["Save<br/>state"] --> B["kexec"] --> C["Restore<br/>Redis"] --> D["ASIC<br/>fast restore"] --> E["Graceful<br/>Restart"]
-    style B fill:#cce5ff,stroke:#004085
+```
+┌────────────────────────────────────────────────────────────┐
+│ PRE-SHUTDOWN (old software)                                │
+│                                                            │
+│  Enable fast restart                                       │
+│  → validate                                                │
+│  → stage kexec kernel                                      │
+│  → LACP keepalive                                          │
+│  → freeze orchagent                                        │
+│  → clear learned routes from APPL_DB                       │
+│  → stop services (BGP GR, NO syncd pre-shutdown)           │
+│  → flush ASIC_DB, COUNTERS_DB, FLEX_COUNTER_DB, RESTAPI_DB │
+│  → copy Redis snapshot to /host/warmboot/                  │
+│  → kexec --exec                                            │
+└─────────────────────────┬──────────────────────────────────┘
+                          │  kexec
+                          v
+┌───────────────────────────────────────────────────────────┐
+│ BOOT (new software)                                       │
+│                                                           │
+│  New kernel boots                                         │
+│  → database loads dump.rdb                                │
+│  → syncd starts with -t fast (ASIC was reset)             │
+│  → new SAI objects created from scratch                   │
+│  → orchagent, BGP, teamd start in fast restart mode       │
+└─────────────────────────┬─────────────────────────────────┘
+                          │
+                          v
+┌───────────────────────────────────────────────────────────┐
+│ RECONCILIATION                                            │
+│                                                           │
+│  orchagent reprograms ASIC from restored APPL_DB state    │
+│  → BGP peers refresh routes (Graceful Restart)            │
+│  → LAGs rejoin (requires LACP slow mode)                  │
+│  → warmboot-finalizer confirms completion                 │
+└───────────────────────────────────────────────────────────┘
 ```
 
-**Save state**
-
-- The script sets `FAST_RESTART_ENABLE_TABLE|system` to `true` and enables warm-restart. It checks database integrity, free space on `/host`, and the next image.
-- It loads the next kernel with `kexec -l` and `SONIC_BOOT_TYPE=fast-reboot`. The old kernel keeps running.
-- LACP keepalive starts. orchagent is paused so it cannot change the ASIC during shutdown.
-- Learned routes are deleted from APPL_DB. Connected and default routes stay (`fast-reboot-filter-routes.py`).
-- Services stop in the order in `/etc/sonic/fast-reboot_order`. BGP signals [Graceful Restart](#bgp-graceful-restart) as it stops. Fast reboot does not send a pre-shutdown to syncd, so the ASIC is not asked to keep forwarding.
-- Redis `SAVE` writes `dump.rdb`, which is copied to `/host/warmboot/`. That directory is on the `/host` partition, so it is still there after the new kernel starts. Before the save, most of STATE_DB is deleted. `FDB_TABLE` (learned MAC addresses) and the warm-restart flags are kept. `ASIC_DB`, `COUNTERS_DB`, `FLEX_COUNTER_DB`, and `RESTAPI_DB` are flushed. Docker is then stopped.
-
-**kexec**
-
-- `kexec -e` jumps to the kernel loaded in the previous block. Firmware and the bootloader do not run.
-
-**Restore Redis**
-
-- systemd starts the containers. The database container finds `SONIC_BOOT_TYPE=fast-reboot` and `/host/warmboot/dump.rdb`, and Redis loads that snapshot.
-
-**ASIC fast restore**
-
-- syncd sees the fast-reboot argument and `FAST_RESTART_ENABLE_TABLE|system` set to `true`, and it starts with `-t fast` (SAI start type 2).
-- The ASIC was reset, so syncd creates new SAI objects. orchagent refills the chip from the restored state, including the saved MAC and neighbor entries.
-
-**Graceful Restart**
-
-- BGP sent Graceful Restart before it stopped. Neighbors hold the routes for the restart interval, commonly about 120 seconds, while the sessions come back.
-- LAG members rejoin. They stay up through the gap only if LACP is in slow mode.
+The key difference from warm reboot: the **ASIC is reset** during fast reboot. `ASIC_DB`, `COUNTERS_DB`, `FLEX_COUNTER_DB`, and `RESTAPI_DB` are flushed before the snapshot because their contents will not be valid after the reset. There is **no syncd pre-shutdown** — the ASIC is not asked to keep forwarding. On the next boot, syncd creates entirely new SAI objects and orchagent reprograms the chip from the restored APPL_DB and CONFIG_DB. Traffic is interrupted while the ASIC is being reprogrammed.
 
 
 
 ## Warm Reboot
 
-Warm reboot restarts the control plane and leaves the ASIC forwarding. The chip is not reset. Routes, neighbors, and the MAC table stay in ASIC memory while the kernel and the containers come back. The data-plane target is a sub-second hit, or no loss. The control plane still has to finish inside the Graceful Restart window.
+Warm reboot restarts the control plane and leaves the ASIC forwarding. The chip is not reset. Routes, neighbors, and the MAC table stay in ASIC memory while the kernel and the containers come back. The data-plane target is a sub-second hit, or no loss. The control plane must finish inside the Graceful Restart window.
 
 ```bash
 sudo warm-reboot
 ```
 
-```mermaid
-flowchart LR
-    A["Save<br/>state"] --> B["kexec"] --> C["Restore<br/>Redis"] --> D["ASIC<br/>reconcile"] --> E["Graceful<br/>Restart"]
-    style B fill:#cce5ff,stroke:#004085
+```
+┌───────────────────────────────────────────────────────────┐
+│ PRE-SHUTDOWN (old software)                               │
+│                                                           │
+│  Enable warm restart                                      │
+│  → validate                                               │
+│  → stage kexec kernel                                     │
+│  → LACP keepalive                                         │
+│  → freeze orchagent                                       │
+│  → stop services (BGP GR + syncd pre-shutdown)            │
+│  → trim + copy Redis snapshot                             │
+│  → kexec --exec                                           │
+└─────────────────────────┬─────────────────────────────────┘
+                          │  kexec (~5 seconds)
+                          v
+┌───────────────────────────────────────────────────────────┐
+│ BOOT (new software)                                       │
+│                                                           │
+│  New kernel boots                                         │
+│  → database loads dump.rdb                                │
+│  → syncd reconnects to ASIC (no reset)                    │
+│  → orchagent, BGP, teamd start in warm restart mode       │
+└─────────────────────────┬─────────────────────────────────┘
+                          │
+                          v
+┌───────────────────────────────────────────────────────────┐
+│ RECONCILIATION                                            │
+│                                                           │
+│  Each layer compares old state with new intent            │
+│  → only differences are pushed to the ASIC                │
+│  → warmboot-finalizer confirms all components reconciled  │
+│  → warm restart flags cleared — reboot complete           │
+└───────────────────────────────────────────────────────────┘
 ```
 
-**Save state**
+On NVIDIA Spectrum switches, `sudo warm-reboot` internally runs as `fastfast-reboot` with `SONIC_BOOT_TYPE=fastfast`. The flow is the same, but `ASIC_DB`, `COUNTERS_DB`, and `FLEX_COUNTER_DB` are flushed before the snapshot, and syncd starts with SAI start type 3 instead of 1.
 
-- The script enables warm-restart and checks that this reboot is safe: database integrity, free space on `/host`, a valid next image, and an ASIC configuration that matches the next image. If that configuration differs, the script stops.
-- It loads the next kernel with `kexec -l` and `SONIC_BOOT_TYPE=warm`. The old kernel keeps running.
-- LACP keepalive starts, and the LACP retry count is raised when the neighbors support it. orchagent is paused.
-- Services stop in the order in `/etc/sonic/warm-reboot_order`. BGP signals Graceful Restart as it stops.
-- After swss stops, syncd is asked to pre-shutdown (`syncd_request_shutdown --pre`). That request does not reset the ASIC. Forwarding entries stay in the chip.
-- Redis `SAVE` writes `dump.rdb` to `/host/warmboot/`. Most of STATE_DB is deleted first. `FDB_TABLE` and the warm-restart flags are kept. `ASIC_DB` is kept as well, so the new syncd still has the SAI object IDs for the running chip. Docker is then stopped.
-
-**kexec**
-
-- `kexec -e` starts the staged kernel. Firmware and the bootloader do not run. The ASIC is a separate device and is not part of this jump.
-
-**Restore Redis**
-
-- The database container sees `SONIC_BOOT_TYPE=warm` (`fastfast` on NVIDIA) and loads `dump.rdb`. APPL_DB, ASIC_DB, CONFIG_DB, and the warm-restart flags are back.
-
-**ASIC reconcile**
-
-- syncd starts with `-t warm` (SAI start type 1) only when the restored snapshot still has the warm-restart flags. The kernel argument and those flags have to agree. It then reconnects to the ASIC using the saved SAI object IDs.
-- Each layer compares the restored Redis state with what the hardware already has, and programs only the differences. That comparison is **reconciliation**. The vendor SAI library has to implement it.
-
-**Graceful Restart**
-
-- BGP sent Graceful Restart before it stopped. Neighbors hold the routes for the restart interval, commonly about 120 seconds. The new BGP session refreshes those routes.
-- LAGs rejoin without a link-down, which requires LACP slow mode.
-
-On NVIDIA Spectrum switches the same command takes a different internal path. The script sees `asic_type=mellanox`, checks that fast-fast boot is supported, then runs the boxes above as `fastfast-reboot` with `SONIC_BOOT_TYPE=fastfast`. syncd starts with `-t fastfast` (SAI start type 3) only when the warm-restart flags are in the restored snapshot. Pre-shutdown is still `--pre`. `ASIC_DB`, `COUNTERS_DB`, and `FLEX_COUNTER_DB` are flushed before the snapshot, and `FDB_TABLE` is kept. Graceful Restart is still sent. The operator command and the goal — a hitless restart — stay the same.
-
-The reconciliation steps inside each container are in [Warm Reboot Deep Dive](22_warm_reboot.md).
+For the full step-by-step walkthrough — pre-shutdown checks, orchagent freeze, syncd state save, reconciliation per container, and the warmboot-finalizer — see [Warm Reboot Deep Dive](22_warm_reboot.md).
 
 
 
@@ -344,37 +369,45 @@ Express reboot keeps the ASIC forwarding while the software stack restarts. It i
 sudo express-reboot
 ```
 
-```mermaid
-flowchart LR
-    A["Save<br/>state"] --> B["kexec"] --> C["Restore<br/>Redis"] --> D["ASIC held<br/>PXE"] --> E["Graceful<br/>Restart"]
-    style B fill:#cce5ff,stroke:#004085
+```
+┌───────────────────────────────────────────────────────────┐
+│ PRE-SHUTDOWN (old software)                               │
+│                                                           │
+│  Enable warm restart                                      │
+│  → validate                                               │
+│  → stage kexec kernel                                     │
+│  → LACP keepalive                                         │
+│  → freeze orchagent                                       │
+│  → stop services (BGP GR + syncd pre-shutdown --pxe)      │
+│  → flush ASIC_DB, COUNTERS_DB, FLEX_COUNTER_DB            │
+│  → copy Redis snapshot to /host/warmboot/                 │
+│  → kexec --exec                                           │
+└─────────────────────────┬─────────────────────────────────┘
+                          │  kexec
+                          v
+┌───────────────────────────────────────────────────────────┐
+│ BOOT (new software)                                       │
+│                                                           │
+│  New kernel boots                                         │
+│  → database loads dump.rdb                                │
+│  → syncd starts with -t express (ASIC was NOT reset)      │
+│  → vendor SAI attaches to forwarding state held by PXE    │
+│  → orchagent, BGP, teamd start in warm restart mode       │
+└─────────────────────────┬─────────────────────────────────┘
+                          │
+                          v
+┌───────────────────────────────────────────────────────────┐
+│ RECONCILIATION                                            │
+│                                                           │
+│  Each layer compares old state with new intent            │
+│  → only differences are pushed to the ASIC                │
+│  → BGP peers refresh routes (Graceful Restart)            │
+│  → LAGs rejoin (requires LACP slow mode)                  │
+│  → warmboot-finalizer confirms completion                 │
+└───────────────────────────────────────────────────────────┘
 ```
 
-**Save state**
-
-- The script checks the ASIC type, enables warm-restart, and runs the same safety checks as warm reboot, including the ASIC configuration match against the next image.
-- It loads the next kernel with `kexec -l` and `SONIC_BOOT_TYPE=express`.
-- LACP keepalive starts, the LACP retry count is raised when neighbors support it, and orchagent is paused.
-- Services stop in `/etc/sonic/warm-reboot_order`, the same file warm reboot uses. BGP signals Graceful Restart as it stops.
-- After swss stops, syncd is asked to pre-shutdown in PXE mode (`syncd_request_shutdown --pxe`). That vendor signal tells the ASIC to hold its forwarding entries. Warm reboot sends `--pre` at this same point.
-- Redis `SAVE` writes `dump.rdb` to `/host/warmboot/`. Most of STATE_DB is deleted first. `FDB_TABLE` and the warm-restart flags are kept. `ASIC_DB`, `COUNTERS_DB`, and `FLEX_COUNTER_DB` are flushed. Docker is then stopped.
-
-**kexec**
-
-- `kexec -e` starts the staged kernel. Firmware and the bootloader do not run. The ASIC keeps the forwarding entries left by the PXE pre-shutdown.
-
-**Restore Redis**
-
-- The database container sees `SONIC_BOOT_TYPE=express` and loads `dump.rdb`. `FDB_TABLE` and the warm-restart flags are in that snapshot. `ASIC_DB` is empty, because it was flushed before the save.
-
-**ASIC held (PXE)**
-
-- syncd starts with `-t express` (SAI start type 4) only when the restored snapshot still has the warm-restart flags. The kernel argument and those flags have to agree.
-- The ASIC was not reset. The vendor SAI attaches to the forwarding state the PXE pre-shutdown left in place.
-
-**Graceful Restart**
-
-- BGP sent Graceful Restart before it stopped. Neighbors hold the routes for the restart interval, commonly about 120 seconds, and LAGs rejoin under LACP slow mode.
+Express reboot is a hybrid of warm and fast. Like warm reboot, the ASIC is **not reset** — syncd sends a PXE pre-shutdown (`syncd_request_shutdown --pxe`) that tells the vendor SAI to hold the forwarding entries. Like fast reboot, `ASIC_DB` is **flushed** before the snapshot, so the new syncd creates fresh SAI objects and reconciles against the hardware state left in the chip. The shutdown order follows `/etc/sonic/warm-reboot_order`, the same file warm reboot uses.
 
 ## Which Reboot to Use
 

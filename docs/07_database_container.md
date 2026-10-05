@@ -33,7 +33,7 @@ A single instance works, but it has fundamental limitations: all databases share
 
 - **Performance isolation.** COUNTERS_DB receives high-frequency writes every few seconds as hardware counters are polled. Running it on its own instance prevents those writes from adding latency to CONFIG_DB reads or APPL_DB updates, which are on the critical path for programming the ASIC.
 
-- **Independent configuration.** Each instance can have different memory limits, different persistence policies, and different eviction behavior. For example, COUNTERS_DB needs no persistence, while APPL_DB and ASIC_DB need AOF enabled for [warm reboot](#persistence-and-warm-reboot).
+- **Independent configuration.** Each instance can have different memory limits, different persistence policies, and different eviction behavior. For example, COUNTERS_DB needs no persistence, while APPL_DB and ASIC_DB must be saved for [fast, warm, and express reboot](21_reboot_types.md#the-redis-snapshot).
 
 - **Lua script isolation.** Redis executes Lua scripts atomically — no other command can run on the same instance while a script is in progress. Several IPC patterns in SONiC rely on Lua scripts for atomicity (see [IPC Mechanisms](10_ipc_mechanisms.md)). Keeping unrelated databases on separate instances means a long-running Lua script on one instance does not block operations on another.
 
@@ -238,7 +238,7 @@ Each instance differs in four things:
 | `--port`       | Each instance listens on a different TCP port |
 | `--unixsocket` | Each instance creates a different socket file |
 | `--pidfile`    | Each instance writes a different PID file     |
-| `--dir`        | Each instance persists data (RDB/AOF) to a different directory |
+| `--dir`        | Each instance persists data (RDB snapshots) to a different directory |
 
 The supervisord config itself is rendered at startup from a Jinja2 template (`supervisord.conf.j2`), as described in [Inside a Running Container](06_inside_a_running_container.md). The template iterates over the instances defined in `database_config.json` to generate one `[program:redis*]` entry per instance — so the number of `redis-server` processes launched is driven entirely by the config file. Adding or removing an instance is a configuration change, not a code change.
 
@@ -372,18 +372,6 @@ The migrator sits between config loading and the `CONFIG_DB_INITIALIZED` flag, s
 - **Upgrade from old image** — `config-setup` reloads the old configuration, then calls `do_db_migration()` before setting the flag.
 
 On a **clean first boot** (no prior configuration), the migrator is skipped entirely — a freshly generated configuration already matches the current schema.
-
-## Persistence and Warm Reboot
-
-By default, Redis databases are **in-memory only**. If the database container restarts, all data is lost and must be repopulated by the system during initialization. This is acceptable for a cold reboot, where every container reinitializes from scratch.
-
-For **warm reboot** — where the goal is to restart software without disrupting traffic — SONiC enables Redis persistence on selected databases using Redis's AOF (Append Only File) mechanism. AOF works by logging every write operation to a file on disk. The sequence is:
-
-1. Before shutdown, the database container ensures all pending writes are flushed to the AOF file.
-2. On restart, Redis replays the AOF to reconstruct the previous in-memory state.
-3. Other containers reconnect and find their data intact — no full re-initialization needed.
-
-Not every database needs persistence. CONFIG_DB is always recoverable from `/etc/sonic/config_db.json` on disk. COUNTERS_DB holds transient statistics that the hardware will repopulate within seconds. Persistence is most valuable for APPL_DB and ASIC_DB, where losing state would force a full reprogramming of the ASIC and a traffic-disrupting reconvergence.
 
 ## Accessing the Database
 

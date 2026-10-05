@@ -1,6 +1,6 @@
 # Warm Reboot Deep Dive
 
-> **Prerequisites**: [Reboot Types](21_reboot_types.md) (comparison of cold, fast, and warm reboot), [The Database Container](07_database_container.md) (Redis persistence and AOF), [SAI and Syncd](13_sai_and_syncd.md) (VID/RID mappings and the SAI meta layer), and [Orchagent Deep Dive](12_orchagent.md) (how orchagent processes state from APPL_DB to ASIC_DB).
+> **Prerequisites**: [Reboot Types](21_reboot_types.md) (comparison of cold, fast, and warm reboot), [The Database Container](07_database_container.md) (Redis persistence), [SAI and Syncd](13_sai_and_syncd.md) (VID/RID mappings and the SAI meta layer), and [Orchagent Deep Dive](12_orchagent.md) (how orchagent processes state from APPL_DB to ASIC_DB).
 
 [Reboot Types](21_reboot_types.md) introduced the five reboot types and summarized what each one does. This document goes deeper into **warm reboot** — the most complex reboot path in SONiC. It covers the full lifecycle: what happens before shutdown, how the kernel transitions, how each layer restores and reconciles state after boot, and how the system knows that warm reboot is complete.
 
@@ -18,6 +18,8 @@ Every reboot causes some disruption. For operators running networks that carry p
 
 Warm reboot targets the use case of **hitless software upgrades**: upgrading the SONiC image (kernel, containers, configuration) with zero or near-zero packet loss. The switch continues forwarding traffic throughout the process. This lets operators upgrade switches during business hours without scheduling maintenance windows.
 
+<img src="../pics/warm_reboot.png" alt="segment" width="600">
+
 ## End-to-End Timeline
 
 The following diagram shows the full warm reboot sequence from the operator's command to the final convergence. Each phase is explained in detail in the sections that follow.
@@ -28,16 +30,15 @@ Operator runs: sudo warm-reboot
 ┌─────────────────────────────────────────────────────────────────────┐
 │ PHASE 1: PRE-SHUTDOWN (old software)                                │
 │                                                                     │
-│  1. Validate warm reboot is possible (checks & prerequisites)       │
-│  2. Enable Redis AOF persistence on required databases              │
-│  3. Flush all Redis databases to AOF files on disk                  │
-│  4. BGP sends Graceful Restart notification to peers                │
-│  5. LACP sends final PDU update to LAG partners                     │
-│  6. syncd saves its internal state (VID↔RID map, SAI object tree)   │
-│  7. Set WARM_RESTART_TABLE entries in STATE_DB                      │
-│  8. Install new SONiC image for kexec                               │
-│  9. Stop all SONiC containers (ASIC is NOT touched)                 │
-│ 10. kexec loads new kernel into memory                              │
+│  1. Enable warm restart (WARM_RESTART_ENABLE_TABLE|system)          │
+│  2. Validate warm reboot is possible (checks & prerequisites)       │
+│  3. Stage kexec kernel (kexec --load, not executed yet)             │
+│  4. Start lag_keepalive.py (LACP keepalive through reboot gap)      │
+│  5. Freeze orchagent (stop processing, ensure consistent state)     │
+│  6. Stop services; BGP signals Graceful Restart to peers;           │
+│     syncd pre-shutdown saves its state (ASIC is NOT reset)          │
+│  7. Trim Redis + copy snapshot (dump.rdb) to /host/warmboot/        │
+│  8. kexec --exec (boot the staged kernel)                           │
 └─────────────────────────────────┬───────────────────────────────────┘
                                   │
                      ──── kexec ──── (kernel switch, ~5 seconds)
@@ -46,18 +47,18 @@ Operator runs: sudo warm-reboot
 ┌─────────────────────────────────────────────────────────────────────┐
 │ PHASE 2: BOOT (new software)                                        │
 │                                                                     │
-│ 11. New kernel boots (BIOS/firmware skipped)                        │
-│ 12. systemd starts services in dependency order                     │
-│ 13. database container starts:                                      │
-│     - Redis loads state from AOF files (pre-reboot state restored)  │
-│ 14. syncd starts in warm boot mode:                                 │
+│  9. New kernel boots (BIOS/firmware skipped)                        │
+│ 10. systemd starts services in dependency order                     │
+│ 11. database container starts:                                      │
+│     - Redis loads dump.rdb snapshot (pre-reboot state restored)     │
+│ 12. syncd starts in warm boot mode:                                 │
 │     - Reads saved VID↔RID map and SAI object tree                   │
 │     - Connects to ASIC without resetting it                         │
-│ 15. SWSS container starts:                                          │
+│ 13. SWSS container starts:                                          │
 │     - orchagent enters reconciliation mode                          │
-│ 16. BGP container starts:                                           │
+│ 14. BGP container starts:                                           │
 │     - FRR re-establishes sessions with Graceful Restart             │
-│ 17. teamd container starts:                                         │
+│ 15. teamd container starts:                                         │
 │     - Rejoins LACP sessions without breaking LAGs                   │
 └─────────────────────────────────┬───────────────────────────────────┘
                                   │
@@ -65,72 +66,86 @@ Operator runs: sudo warm-reboot
 ┌─────────────────────────────────────────────────────────────────────┐
 │ PHASE 3: RECONCILIATION (new software, ASIC untouched)              │
 │                                                                     │
-│ 18. Each layer compares old state (from Redis) with new intent      │
-│ 19. Only differences are pushed to the ASIC                         │
-│ 20. Each container signals "reconciliation done" in STATE_DB        │
-│ 21. warmboot-finalizer checks all components are reconciled         │
-│ 22. System clears warm restart flags — warm reboot complete         │
+│ 16. Each layer compares old state (from Redis) with new intent      │
+│ 17. Only differences are pushed to the ASIC                         │
+│ 18. Each container signals "reconciliation done" in STATE_DB        │
+│ 19. warmboot-finalizer checks all components are reconciled         │
+│ 20. System clears warm restart flags — warm reboot complete         │
 └─────────────────────────────────────────────────────────────────────┘
-
-     Data plane: ████████████████████████████████████████████████████████
-                 Forwarding continues uninterrupted throughout
 ```
 
 ## Phase 1: Pre-Shutdown
 
 The warm reboot script (`/usr/local/bin/warm-reboot`) runs on the old software and prepares the system for a hitless restart. Every step in this phase is designed to ensure that the new software stack can pick up exactly where the old one left off.
 
-### Step 1: Validation and Prerequisites
+### Step 1: Enable Warm Restart
 
-Before doing anything disruptive, the script checks that warm reboot is safe to proceed:
-
-- **Platform support.** Not all ASICs and vendor SAI libraries support warm boot. The script checks whether the platform's SAI implementation advertises warm restart capability. If it does not, the script aborts.
-
-- **System health.** The script verifies that critical services are running (database, swss, syncd, bgp). Attempting a warm reboot on a degraded system risks a failed restart.
-
-- **Current boot type.** If the system is already mid-way through a previous warm restart that did not complete, the script may abort or force a cold reboot to avoid compounding failures.
-
-### Step 2–3: Redis State Persistence
-
-SONiC's operational state lives in Redis databases. Under normal operation, these databases are in-memory — fast, but volatile. For warm reboot, the state must survive the kernel restart.
-
-The script enables **AOF (Append Only File)** persistence on the databases that need to survive:
+The script enables warm restart at the system level:
 
 ```
-APPL_DB    — contains the intended state (routes, neighbors, ports) written by application daemons
-ASIC_DB    — contains the SAI objects currently programmed in hardware (VIDs, attributes)
-STATE_DB   — contains observed runtime state (warm restart flags, feature status)
-CONFIG_DB  — contains the operator's configuration (recoverable from config_db.json, but
-              persisting it avoids reloading from disk)
+STATE_DB:
+  WARM_RESTART_ENABLE_TABLE|system → { "enable": "true" }
 ```
 
-The script then forces a `BGSAVE` or AOF rewrite to flush all pending writes to disk. This ensures the on-disk files reflect the exact state at shutdown time. See [Persistence and Warm Reboot](07_database_container.md#persistence-and-warm-reboot) for how AOF works.
+This flag tells every container, on the next boot, to check whether it should start in warm restart mode rather than cold start mode. After staging the kexec kernel (Step 3), the script also clears any leftover `state` fields in `WARM_RESTART_TABLE|*` from a previous reboot so the next boot starts with a clean slate.
 
-### Step 4: BGP Graceful Restart
+The per-service entries (e.g., `WARM_RESTART_TABLE|orchagent`, `WARM_RESTART_TABLE|bgp`) are not written by the reboot script — each service writes its own entry when it starts up in warm restart mode on the next boot.
 
-Before the BGP daemon shuts down, it signals **Graceful Restart (GR)** to all of its peers (as defined in RFC 4724). The GR notification tells each peer:
+> **Why enable before validate?** Right before enabling, the script registers a `trap clear_boot` handler. If anything later in the script fails — including validation — the trap fires and runs `clear_boot`, which calls `config warm_restart disable` to revert the flag, unloads any staged kexec kernel, and renames any leftover `dump.rdb` aside. Enabling first ensures the flag is always covered by the cleanup handler.
 
-> "I am going to restart. Please hold all the routes you learned from me for up to 120 seconds (the restart timer). Do not withdraw them. When I come back, I will re-establish the session and confirm which routes are still valid."
+### Step 2: Validation and Prerequisites
 
-From the peers' perspective, the SONiC switch's routes remain in their forwarding tables — traffic continues to flow toward the switch. The peers set a timer; if the switch does not return before the timer expires, they withdraw the routes.
+Before doing anything disruptive, the script runs a series of safety checks. One check — **no warm restart already in progress** — actually runs before Step 1: if the system is mid-way through a previous warm restart that did not complete, the script aborts (unless forced). The remaining checks run after warm restart is enabled:
 
-This is critical because warm reboot takes time. Without GR, the moment BGP closes its sessions, every peer would immediately withdraw all routes learned from the switch, causing traffic to be rerouted or dropped across the network — even though the switch's own ASIC is still forwarding correctly.
+- **PFC storm check.** Verifies no PFC (Priority-based Flow Control) storm is currently active on any ASIC.
 
-### Step 5: LACP Final PDU
+- **SSD health.** Checks the storage device health to ensure the snapshot and state files can be written safely.
 
-If the switch has LAG (Link Aggregation Group) interfaces using LACP (Link Aggregation Control Protocol), the teamd daemon sends a final LACP PDU (Protocol Data Unit) to the partner switch before shutting down. This tells the partner that the switch is entering a timeout period.
+- **Database integrity.** Runs `check_db_integrity.py` to validate the Redis databases are consistent before saving them.
 
-**Why LACP slow mode is required.** LACP has two speeds:
-- **Fast mode**: PDUs every 1 second, timeout after 3 seconds.
-- **Slow mode**: PDUs every 30 seconds, timeout after 90 seconds.
+- **Disk space.** Verifies that `/host` has enough free space for the `dump.rdb` snapshot and syncd state files.
 
-Warm reboot takes longer than 3 seconds, so fast mode would cause the partner to declare the LAG member down and stop sending traffic through it. Slow mode gives the switch a 90-second window to restart and rejoin the LAG. This is why warm reboot (and fast reboot) **requires LACP slow mode** on all LAG interfaces.
+- **Next image verification.** Runs `sonic-installer verify-next-image` to confirm the target SONiC image is valid.
 
-### Step 6: Syncd State Save
+- **ASIC config checksum.** For warm, fastfast, and express reboot, the script runs `asic_config_check` to verify that the ASIC configuration has not changed between the current and next image. A changed ASIC config could make reconciliation unsafe.
 
-This is one of the most important pre-shutdown steps. Syncd saves its internal state to a file on disk so the new syncd instance can reconnect to the ASIC without resetting it.
+### Step 3: Stage kexec Kernel
 
-What gets saved:
+The script loads the new kernel and initrd into memory using `kexec --load`. This stages the kernel for a fast reboot later — it is **not executed yet**. Staging it early means the kernel is ready to go the moment the script finishes shutting everything down.
+
+```
+kexec --load <new_kernel> --initrd=<initrd> --append="SONIC_BOOT_TYPE=warm ..."
+```
+
+### Step 4: LACP Keepalive
+
+If the switch has LAG interfaces, the script starts `lag_keepalive.py`, which continues sending LACP PDUs through the reboot gap to keep the partner from timing out. See [LACP Slow Mode](21_reboot_types.md#lacp-slow-mode) for why slow mode is required and how the keepalive works.
+
+> **Requirement:** All LAG interfaces must be configured in LACP slow mode.
+
+### Step 5: Orchagent Freeze
+
+The reboot script **freezes** orchagent by running `orchagent_restart_check`. This tool asks orchagent to:
+
+1. **Self-check** — verify it has finished processing all pending operations and is not in a transient state (e.g., mid-way through programming a batch of routes).
+
+2. **Freeze** — stop consuming new events from APPL_DB. Once frozen, orchagent's [main select loop](12_orchagent.md#the-main-select-loop) no longer drains entries from its Consumers, so no new SAI operations reach syncd.
+
+```bash
+docker exec -i swss /usr/bin/orchagent_restart_check -w 2000 -r 5
+#   -w 2000  wait up to 2000 ms per attempt
+#   -r 5     retry up to 5 times
+```
+
+The tool retries up to 5 times with a 2-second interval, giving orchagent 10 seconds to reach a quiescent state. If orchagent cannot be frozen (e.g., it is stuck in a long operation), the reboot aborts unless the `-f` (force) flag was used.
+
+This is a critical step. Everything after it — stopping services, syncd pre-shutdown, and the Redis snapshot — depends on the guarantee that orchagent will not change ASIC_DB or push new SAI operations while the state is being saved.
+
+### Step 6: Stop Services, BGP Graceful Restart, and Syncd Pre-Shutdown
+
+The script stops all SONiC containers in a defined order. When the **bgp** container stops, FRR automatically signals [BGP Graceful Restart](21_reboot_types.md#bgp-graceful-restart) to all peers, telling them to hold the switch's routes for up to 120 seconds rather than withdrawing them. This keeps traffic flowing toward the switch while it restarts.
+
+When the **swss** container stops, the script triggers syncd pre-shutdown before continuing to the next service. Syncd saves its internal state to a file on disk so the new syncd instance can reconnect to the ASIC without resetting it:
 
 | Saved State | Purpose |
 |-------------|---------|
@@ -140,38 +155,23 @@ What gets saved:
 
 The vendor SAI library also saves whatever internal state it needs for warm restart. This is vendor-specific — for example, the Broadcom SAI may save internal table pointers, while the NVIDIA SAI may save different structures. The important thing is that the SAI library can reconnect to the ASIC and resume operations without a hardware reset.
 
-### Step 7: Warm Restart Flags
+Because orchagent is already frozen (Step 5), no new SAI operations arrive while syncd is saving. The saved state matches the ASIC exactly.
 
-The script writes entries to the `WARM_RESTART_TABLE` in STATE_DB, marking which services are performing a warm restart. These flags tell each container, on the next boot, to start in warm restart mode rather than cold start mode.
+### Step 7: Redis State Persistence
 
-```
-STATE_DB:
-  WARM_RESTART_ENABLE_TABLE|system → { "enable": "true" }
-```
+Only now — after orchagent is frozen and all services are stopped — does the script save the Redis snapshot. It trims the databases and copies `dump.rdb` from the database container to `/host/warmboot/`. Notably, warm reboot keeps `ASIC_DB` in the snapshot so the new syncd can reconnect to the running ASIC using the saved SAI object IDs. See [The Redis Snapshot](21_reboot_types.md#the-redis-snapshot) for the full mechanism and how it differs across reboot types.
 
-Individual services also have their own warm restart entries:
+Saving the snapshot last guarantees consistency: because orchagent was frozen before services stopped, and services were stopped before the save, the `dump.rdb` reflects the final state of every database with no in-flight changes.
 
-```
-STATE_DB:
-  WARM_RESTART_TABLE|orchagent  → { "restart_count": "1", "state": "initialized" }
-  WARM_RESTART_TABLE|bgp        → { "restart_count": "1", "state": "initialized" }
-  WARM_RESTART_TABLE|teamsyncd  → { "restart_count": "1", "state": "initialized" }
-```
+### Step 8: kexec
 
-### Step 8–9: Image Setup and Container Stop
-
-The script installs the new SONiC image (if upgrading) and prepares it for kexec. It then stops all SONiC containers in the correct order. Critically, the stop sequence does **not** reset the ASIC — syncd shuts down gracefully after saving state, leaving the ASIC's forwarding tables intact.
-
-### Step 10: kexec
-
-The script calls `kexec` to load the new kernel directly into memory. `kexec` is a Linux mechanism that boots a new kernel without going through the BIOS/firmware POST sequence. This saves 30–60+ seconds compared to a cold reboot.
+The script executes the staged kernel:
 
 ```
-kexec --load <new_kernel> --initrd=<initrd> --append="SONIC_BOOT_TYPE=warm ..."
 kexec --exec
 ```
 
-The `SONIC_BOOT_TYPE=warm` kernel argument tells the new SONiC system to expect a warm restart and to handle services accordingly.
+The `SONIC_BOOT_TYPE=warm` kernel argument (set in Step 3) tells the new SONiC system to expect a warm restart and to handle services accordingly.
 
 At this point, the old kernel is gone. The CPU is running new code. But the ASIC — a separate piece of hardware with its own memory — has not been touched. Its forwarding tables, counters, and port state are exactly as they were before the reboot.
 
@@ -184,10 +184,15 @@ The new kernel boots and systemd starts SONiC services. The key difference from 
 The database container starts first (it is a dependency for everything else). Instead of starting with empty Redis instances, it:
 
 1. Detects that `SONIC_BOOT_TYPE=warm`.
-2. Starts Redis with AOF replay enabled.
-3. Redis reads the AOF files saved in Phase 1 and reconstructs the pre-reboot in-memory state.
+2. Finds the `dump.rdb` snapshot in `/host/warmboot/`.
+3. Starts Redis by loading the snapshot, which reconstructs the pre-reboot in-memory state.
 
-After this step, all Redis databases contain exactly the same data they had before the reboot. APPL_DB has the routes and neighbors, ASIC_DB has the SAI objects, CONFIG_DB has the configuration, and STATE_DB has the warm restart flags.
+After this step, all Redis databases contain exactly the same data they had before the reboot:
+
+- **APPL_DB** — routes, neighbors, and other application-level intent.
+- **ASIC_DB** — SAI objects that map to hardware entries.
+- **CONFIG_DB** — the switch configuration.
+- **STATE_DB** — warm restart flags and operational state.
 
 ### Syncd Container
 
@@ -199,7 +204,7 @@ SAI_KEY_BOOT_TYPE = 1  (warm)
 
 Syncd's warm boot startup:
 
-1. **Load saved state.** Syncd reads the VID↔RID mapping table and SAI object tree from the file saved in Phase 1 (Step 6).
+1. **Load saved state.** Syncd reads the VID↔RID mapping table and SAI object tree from the file saved during syncd pre-shutdown (Phase 1, Step 6).
 
 2. **Initialize SAI in warm mode.** Syncd calls `sai_api_initialize()` followed by `sai_switch_api->create_switch()` with the `SAI_SWITCH_ATTR_RESTART_WARM` attribute set to `true`. This tells the vendor SAI library: "The ASIC is already running with programmed state. Connect to it without resetting anything."
 
@@ -215,11 +220,13 @@ Orchagent starts and detects that it is in warm restart mode. Instead of program
 
 FRR starts and re-establishes BGP sessions with all peers. Because the switch signaled Graceful Restart before shutting down, the peers have been holding routes. The new BGP session negotiates GR, and the peers send their full route tables again. FRR processes these routes and pushes them to zebra → fpmsyncd → APPL_DB, just like a normal route update.
 
+> **Requirement:** Both the SONiC switch and its BGP peers must support [Graceful Restart (RFC 4724)](21_reboot_types.md#bgp-graceful-restart).
+
 The key difference is that most of these routes will match what is already in APPL_DB (carried over from the pre-reboot state). Orchagent's reconciliation process detects this and avoids reprogramming them.
 
 ### teamd Container
 
-teamd reconnects to LACP sessions. Because the LAG partner's timeout has not expired (thanks to LACP slow mode from Step 5), the partner still considers the LAG member active. teamd resumes sending PDUs, and the LAG remains up without any traffic disruption.
+teamd reconnects to LACP sessions. Because the LAG partner's timeout has not expired (thanks to LACP slow mode and the keepalive from Step 4), the partner still considers the LAG member active. teamd resumes sending PDUs, and the LAG remains up without any traffic disruption.
 
 ## Phase 3: Reconciliation
 
@@ -236,6 +243,8 @@ You might wonder: if the ASIC is untouched and Redis has the old state, why not 
 
 Even if the new software is identical to the old (same version, same configuration), reconciliation is still needed to **re-register** the software's interest in the existing state. Without reconciliation, orchagent's in-memory data structures would be empty, and it would have no record of the SAI objects it manages.
 
+> **Requirement:** Each container that participates in warm restart must implement reconciliation logic. A daemon that does not support it will reinitialize from scratch, potentially causing brief disruption for its specific feature.
+
 ### How Reconciliation Works
 
 Each layer of the stack handles reconciliation independently:
@@ -244,7 +253,7 @@ Each layer of the stack handles reconciliation independently:
 ┌─────────────────────────────────────────────────────────────┐
 │                    Application Layer                        │
 │                                                             │
-│  orchagent reads APPL_DB (old state from Redis AOF)         │
+│  orchagent reads APPL_DB (old state from Redis snapshot)    │
 │  + receives new state from daemons (fpmsyncd, neighsyncd)   │
 │  → compares old vs new                                      │
 │  → pushes ONLY diffs to syncd                               │
@@ -275,7 +284,7 @@ Orchagent is where most of the reconciliation logic lives. Here is how it works 
 
 **1. Load old state from Redis.**
 
-When orchagent starts in warm mode, APPL_DB already contains the pre-reboot state (restored from AOF). Orchagent reads all relevant tables — `ROUTE_TABLE`, `NEIGH_TABLE`, `VLAN_TABLE`, `PORT_TABLE`, etc. — into its in-memory Orch data structures. This gives orchagent a complete picture of what the ASIC was programmed with before the reboot.
+When orchagent starts in warm mode, APPL_DB already contains the pre-reboot state (restored from the `dump.rdb` snapshot). Orchagent reads all relevant tables — `ROUTE_TABLE`, `NEIGH_TABLE`, `VLAN_TABLE`, `PORT_TABLE`, etc. — into its in-memory Orch data structures. This gives orchagent a complete picture of what the ASIC was programmed with before the reboot.
 
 **2. Receive new state from application daemons.**
 
@@ -283,7 +292,7 @@ Meanwhile, the application daemons (fpmsyncd, neighsyncd, portsyncd, etc.) start
 
 **3. Compare and compute the diff.**
 
-Once orchagent has both the old state (from the AOF-restored APPL_DB) and the new state (from the newly started daemons), it compares them entry by entry:
+Once orchagent has both the old state (from the snapshot-restored APPL_DB) and the new state (from the newly started daemons), it compares them entry by entry:
 
 | Comparison Result                                           | Action |
 |-------------------------------------------------------------|-------------------------------|
@@ -309,7 +318,7 @@ Syncd's reconciliation works at the SAI layer. On warm boot, syncd enters **comp
 1. Syncd has the **old view** — the saved SAI object tree from before the reboot.
 2. Orchagent sends SAI operations representing the **new view** — what the new software wants programmed.
 3. Syncd compares the new operations against its saved state.
-4. Only operations that represent actual changes (creates, deletes, or modifies) are forwarded to the vendor SAI library and applied to the ASIC.
+4. Only actual differences (creates, deletes, or modifications) are pushed to the ASIC.
 
 The comparison logic uses the VID↔RID mappings to correlate the new software's SAI objects with the existing ASIC entries. For example, if orchagent sends a `create_route_entry` for a prefix that already exists with the same attributes, syncd recognizes it as a no-op and skips the hardware call entirely.
 
@@ -339,7 +348,7 @@ teamd (the LAG daemon) also performs reconciliation:
 
 ## The Warmboot Finalizer
 
-The **warmboot-finalizer** is a service that monitors the reconciliation process and declares warm reboot complete. It runs as a systemd service after all SONiC containers have started.
+The **warmboot-finalizer** is a host-level systemd service that monitors the reconciliation process and declares warm reboot complete. It starts after all SONiC containers have started.
 
 ### What It Does
 
@@ -348,7 +357,7 @@ The **warmboot-finalizer** is a service that monitors the reconciliation process
 3. Once all services are reconciled, clears the warm restart flags:
    - Sets `WARM_RESTART_ENABLE_TABLE|system` → `{ "enable": "false" }`.
    - Cleans up individual service warm restart entries.
-4. Disables AOF persistence on Redis databases (no longer needed after warm restart is complete; keeping AOF enabled would add unnecessary write overhead during normal operation).
+4. Saves the reconciled configuration to disk (`config save -y`).
 5. Declares warm reboot complete.
 
 ### Timeouts
@@ -433,21 +442,7 @@ During this process:
 | Updating LACP configuration                  | `teamd`         |
 | Debugging a container issue without rebooting the whole switch | Any supported container |
 
-Container-level warm restart is less disruptive than a full warm reboot because the kernel stays running, Redis does not need AOF persistence, and only one service goes through reconciliation.
-
-## Requirements Summary
-
-Warm reboot has more requirements than cold or fast reboot because it must preserve running state across a software restart:
-
-| Requirement | Why It Is Needed |
-|-------------|------------------|
-| **SAI warm boot support** | The vendor SAI library must support connecting to an already-running ASIC without resetting it. Not all ASICs or SAI implementations support this. |
-| **Redis AOF persistence** | APPL_DB and ASIC_DB state must survive the kernel restart. AOF files are written to disk before shutdown and replayed after boot. |
-| **BGP Graceful Restart** | Peers must hold routes during the restart window (~120 seconds). Both the SONiC switch and its peers must support RFC 4724. |
-| **LACP slow mode** | LAG partners must use 30-second PDU intervals so they do not time out the LAG during the restart (a 3-second fast-mode timeout is too short). |
-| **kexec** | The Linux kernel must support kexec for fast kernel loading (skipping BIOS/firmware). |
-| **Application warm restart support** | Each container/daemon that participates in warm restart must implement reconciliation logic. A daemon that does not support it will reinitialize from scratch, potentially causing brief disruption for its specific feature. |
-| **Sufficient disk space** | Redis AOF files, syncd state files, and the new SONiC image all require disk space. |
+Container-level warm restart is less disruptive than a full warm reboot because the kernel stays running, Redis remains in memory (no snapshot needed), and only one service goes through reconciliation.
 
 ## Limitations and Failure Modes
 
@@ -467,7 +462,7 @@ The exact list of supported features depends on the SONiC version and the vendor
 | Failure | What Happens | Recovery |
 |---------|-------------|----------|
 | SAI warm boot fails (ASIC state corrupted) | Syncd detects the mismatch and triggers a cold restart | Full ASIC reprogram, traffic disruption |
-| Redis AOF corrupted or missing | Database container starts with empty state | Falls back to cold behavior — full reinit |
+| Redis snapshot (`dump.rdb`) corrupted or missing | Database container starts with empty state | Falls back to cold behavior — full reinit |
 | BGP GR timer expires (peers withdraw routes) | Routes are withdrawn across the network | BGP re-converges after sessions re-establish, but traffic was disrupted during the gap |
 | LACP timeout (fast mode was used) | LAG partner declares members down | LAG breaks; traffic on that LAG is disrupted until LACP re-converges |
 | Reconciliation timeout | warmboot-finalizer logs an error | System continues running but may have stale or missing entries |
