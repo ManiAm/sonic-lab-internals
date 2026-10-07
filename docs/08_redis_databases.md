@@ -166,24 +166,11 @@ COUNTERS:oid:0x1000000000003
 
 - Does not affect forwarding behavior — purely observational. Counters reflect what has already happened; changing a counter value in Redis has no effect on the ASIC.
 
-## LOGLEVEL_DB
+## LOGLEVEL_DB (Deprecated)
 
-**Purpose**: Stores dynamic log level settings for SONiC daemons. Allows operators to increase or decrease logging verbosity at runtime without restarting any process.
+Originally stored dynamic log-level settings for SONiC daemons. As of database schema version 3.0.5, log-level settings have been migrated to CONFIG_DB (the `LOGGER` table). The `db_migrator` automatically copies any remaining LOGLEVEL_DB entries into CONFIG_DB and deletes them. LOGLEVEL_DB still exists as a defined database (ID 3) but is no longer read or written by any daemon.
 
-**Example entries**:
-
-```
-ORCHAGENT_LOGLEVEL    → { "LOGLEVEL": "NOTICE" }
-PORTSYNCD_LOGLEVEL    → { "LOGLEVEL": "INFO" }
-```
-
-**How operators use it**:
-
-```bash
-swssloglevel -l DEBUG -c orchagent
-```
-
-This command updates LOGLEVEL_DB. The target daemon detects the change and adjusts its logging immediately — no restart required. This is particularly useful during troubleshooting, when you need detailed logs from a specific daemon without disrupting the rest of the system.
+> For runtime log-level commands, see [Logging — Runtime Log-Level Tuning](24_logging.md#runtime-log-level-tuning).
 
 ## Data Flow Example: Configuring a Port
 
@@ -272,7 +259,7 @@ Each step in this flow uses a specific IPC pattern to deliver the notification b
 | ASIC_DB     | 1  | Hardware-ready SAI objects       | Orchagent (via sairedis)         | Syncd                                |
 | STATE_DB    | 6  | Operational state / dependencies | Various daemons                  | Manager daemons, orchagent, applications |
 | COUNTERS_DB | 2  | Hardware counters / statistics   | Syncd (FlexCounter)              | CLI, telemetry, SNMP                 |
-| LOGLEVEL_DB | 3  | Dynamic log levels               | Operator tools                   | All daemons                          |
+| LOGLEVEL_DB | 3  | Dynamic log levels (deprecated — migrated to CONFIG_DB `LOGGER` table) | —                                | —                                    |
 
 ---
 

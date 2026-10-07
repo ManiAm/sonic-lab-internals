@@ -255,4 +255,4 @@ If CONFIG_DB has the value but APPL_DB doesn't, the manager daemon either:
 
 ---
 
-**Previous**: [← State Interactions](23_state_interactions.md)
+**Previous**: [← Logging](24_logging.md)

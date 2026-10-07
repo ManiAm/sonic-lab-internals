@@ -36,4 +36,5 @@ Read in order — each document builds on the concepts from the previous ones.
 | 21 | [Reboot Types](docs/21_reboot_types.md) | Cold, soft, fast, warm, and express reboot comparison |
 | 22 | [Warm Reboot Deep Dive](docs/22_warm_reboot.md) | Pre-shutdown state saving, kexec kernel transition, reconciliation, warmboot-finalizer, container-level warm restart |
 | 23 | [State Interactions](docs/23_state_interactions.md) | End-to-end data flows for routing, port events, VLAN, ARP |
-| 24 | [Troubleshooting](docs/24_troubleshooting.md) | Debugging techniques for common SONiC problems |
+| 24 | [Logging](docs/24_logging.md) | Syslog, rsyslog routing, SWSS logging macros, SAI recording, log rotation, runtime tuning, techsupport, core dumps |
+| 25 | [Troubleshooting](docs/25_troubleshooting.md) | Debugging techniques for common SONiC problems |

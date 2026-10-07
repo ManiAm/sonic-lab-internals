@@ -48,7 +48,7 @@ The table below is the complete list of every logical database defined in SONiC,
 | 0     | APPL_DB            | Core        | Processed application state, ready for hardware programming |
 | 1     | ASIC_DB            | Core        | Hardware-ready SAI objects for syncd |
 | 2     | COUNTERS_DB        | Core        | Interface, queue, and buffer counters from hardware |
-| 3     | LOGLEVEL_DB        | Core        | Dynamic log level settings per daemon |
+| 3     | LOGLEVEL_DB        | Core        | Dynamic log level settings per daemon (deprecated — migrated to CONFIG_DB `LOGGER` table) |
 | 4     | CONFIG_DB          | Core        | User configuration — the source of truth for operator intent |
 | 5     | PFC_WD_DB          | Core        | Priority Flow Control watchdog data |
 | 5     | FLEX_COUNTER_DB    | Core        | Flexible counter configuration and polling control |
