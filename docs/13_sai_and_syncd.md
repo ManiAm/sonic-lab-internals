@@ -2,16 +2,19 @@
 
 > **Prerequisite**: [Orchagent Deep Dive](12_orchagent.md) — understand how orchagent makes SAI calls through the sairedis library.
 
-SAI (Switch Abstraction Interface) is what makes SONiC vendor-independent. It defines a standard API for programming switch ASICs, regardless of which silicon vendor manufactured the chip. The syncd container is the process that executes these SAI calls against the actual hardware.
+SAI (Switch Abstraction Interface) is what makes SONiC vendor-independent. It defines a standard API for programming switch ASICs, regardless of which silicon vendor manufactured the chip. The syncd container hosts the daemon that executes these SAI calls against the actual hardware.
 
 ## What is SAI?
 
-SAI is a **vendor-agnostic API** for controlling network forwarding elements (switch ASICs, NPUs, or software switches). It was created under the Open Compute Project (OCP) and defines:
+SAI is a **vendor-agnostic API** for controlling network forwarding elements (switch ASICs, network processing units (NPUs), or software switches). It was created under the Open Compute Project (OCP) and defines:
 
-- **Object types**: ports, routes, next-hops, ACLs, queues, buffers, etc.
+- **Objects**: SAI models every ASIC resource — a port, a route, an ACL rule — as an object.
+- **Object types**: each object has a type, such as port, route, next hop, ACL, queue, or buffer.
 - **Attributes**: properties of each object (e.g., a port has speed, admin state, MTU).
 - **Operations**: create, remove, set, get for each object.
 - **Notifications**: asynchronous events from hardware (link state, FDB, etc.).
+
+> [The SAI Object Model](14_sai_object_model.md) examines the SAI API itself in detail: how objects are named, how attributes govern their behavior, and the patterns orchagent modules use to program them.
 
 ### SAI Headers vs. Vendor Implementations
 
@@ -27,6 +30,8 @@ Both expose the exact same function signatures (e.g., `sai_create_route_entry()`
 Think of it like a C interface: the header says "there must be a function called `sai_create_route_entry()` with these parameters," but it says nothing about *how* that function works. Each vendor fills in the body of that function with their own proprietary SDK calls.
 
 This is what makes SONiC portable — orchagent calls the same SAI API regardless of the underlying hardware, and only the linked `libsai.so` changes from one platform to another.
+
+### SAI API Versioning
 
 Each SONiC release is tied to a SAI API **generation** (major.minor), fixed at release cut. The API surface — object types, attributes, function signatures — does not change within a generation. Patch revisions within that generation continue to be adopted on the release branch for bug fixes and metadata corrections (e.g., 202511 was cut at 1.17.0 but has since moved to 1.17.5). SONiC follows a **biannual release cadence** — one release in May and one in November each year — with releases named by year and month (`YYYYMM`).
 
@@ -88,6 +93,28 @@ Syncd maintains a **VID↔RID mapping table**. When it receives a SAI operation 
 
 This indirection is what enables warm restart: SONiC can compare the VID-based state it intends to program against the RID-based state already in hardware, reconciling only the differences.
 
+#### The VID Bit Layout
+
+Sairedis packs the VID so it can recover the object type without a second lookup. From [`VirtualObjectIdManager.cpp`](https://github.com/sonic-net/sonic-sairedis/blob/master/lib/VirtualObjectIdManager.cpp):
+
+```text
+63          56 55          48 47          40 39 38                            0
++-------------+--------------+--------------+--+------------------------------+
+| Switch Index| Object Type  |Global Context|EF|        Object Index          |
+|  (8 bits)   |  (8 bits)    |  (8 bits)    |1b|         (39 bits)            |
++-------------+--------------+--------------+--+------------------------------+
+```
+
+| Field | Meaning |
+|---|---|
+| **Switch index** | Which switch this object belongs to. Each ASIC on a multi-ASIC system has its own index. |
+| **Object type** | The `sai_object_type_t` value, such as port, VLAN, or next-hop group. |
+| **Global context** | Which sairedis/syncd context allocated the VID. A single syncd uses context 0. |
+| **Extensions flag** (EF) | `1` for an extension object type, such as DASH (Disaggregated APIs for SONiC Hosts). The type is stored as an offset so it still fits in 8 bits. |
+| **Object index** | A monotonically increasing counter shared by every VID in that context. A removed object leaves its index unused. |
+
+This layout is what lets you read an `oid:0x...` string in ASIC_DB and identify the object type. Vendor RIDs use their own encoding.
+
 ### The SAI Meta Layer
 
 Between orchagent's SAI call and the actual ASIC_DB write, there is a **meta validation layer** inside sairedis. It performs four key functions:
@@ -132,7 +159,7 @@ In async mode, orchagent's SAI call returns `SAI_STATUS_SUCCESS` as soon as the 
 - This is a deliberate safety mechanism: an inconsistent state (where orchagent believes something is programmed but it is not) is more dangerous than a restart.
 - The crash triggers container restart, which re-initializes the ASIC to a known state.
 
-> **History note.** SONiC originally defaulted to async mode. [PR #5735](https://github.com/sonic-net/sonic-buildimage/pull/5735) (Shi Su, Microsoft, merged October 29 2020) flipped the default to sync.
+> SONiC originally defaulted to async mode. [PR #5735](https://github.com/sonic-net/sonic-buildimage/pull/5735) (Shi Su, Microsoft, merged October 29 2020) flipped the default to sync.
 
 -----
 
@@ -251,31 +278,19 @@ Syncd's main loop detects the new entry on the ASIC_DB channel and processes it 
 5. **Dispatch** — the operation is `create`, so syncd calls the vendor SAI's `sai_create_route_entry()`.
 6. **Program hardware** — the vendor SAI translates the call into ASIC-specific SDK operations that write to the forwarding tables.
 
-## The SAI API Surface
-
-SAI defines APIs for many object types. Here are the main categories:
-
-| Category       | SAI Object Types |
-|----------------|-----------------|
-| **Switching**  | Port, VLAN, FDB, STP, LAG |
-| **Routing**    | Router Interface, Route, Next Hop, Next Hop Group, Virtual Router |
-| **ACL**        | ACL Table, ACL Entry, ACL Counter |
-| **QoS**        | Queue, Scheduler, Scheduler Group, Buffer, WRED |
-| **Tunneling**  | Tunnel, Tunnel Map, Tunnel Term |
-| **Monitoring** | Mirror Session, sFlow, TAM |
-| **Security**   | MACsec, IPsec |
-
 ## Summary
 
 | Component   | Location                 | Role                           |
 |-------------|--------------------------|--------------------------------|
 | SAI Headers | Shared (at compile time) | Define the vendor-agnostic API |
 | sairedis    | SWSS container           | Serialize SAI calls to ASIC_DB |
-| SAI Meta    | SWSS container           | Validate attributes and allocate VIDs |
+| SAI Meta    | SWSS container (inside sairedis) | Validate attributes and allocate VIDs |
 | VID↔RID map | Syncd container          | Translate between virtual and real object IDs |
 | syncd       | Syncd container          | Execute vendor SAI against the real SDK |
 | Vendor SDK  | Syncd container          | Drive the physical ASIC |
 
+SAI gives SONiC a single, vendor-agnostic API for programming any supported ASIC. Sairedis serializes orchagent's SAI calls into ASIC_DB, the meta layer validates them and assigns VIDs, and syncd translates VIDs to vendor RIDs before calling the real hardware SDK. The next document, [The SAI Object Model](14_sai_object_model.md), examines the API itself: object types, attributes, and the patterns orchagent modules use to program them.
+
 ---
 
-**Previous**: [← Orchagent Deep Dive](12_orchagent.md) · **Next**: [The BGP Container and FRR →](14_bgp_container.md)
+**Previous**: [← Orchagent Deep Dive](12_orchagent.md) · **Next**: [The SAI Object Model →](14_sai_object_model.md)

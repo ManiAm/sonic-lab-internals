@@ -33,7 +33,7 @@ A single instance works, but it has fundamental limitations: all databases share
 
 - **Performance isolation.** COUNTERS_DB receives high-frequency writes every few seconds as hardware counters are polled. Running it on its own instance prevents those writes from adding latency to CONFIG_DB reads or APPL_DB updates, which are on the critical path for programming the ASIC.
 
-- **Independent configuration.** Each instance can have different memory limits, different persistence policies, and different eviction behavior. For example, COUNTERS_DB needs no persistence, while APPL_DB and ASIC_DB must be saved for [fast, warm, and express reboot](22_reboot_types.md#the-redis-snapshot).
+- **Independent configuration.** Each instance can have different memory limits, different persistence policies, and different eviction behavior. For example, COUNTERS_DB needs no persistence, while APPL_DB and ASIC_DB must be saved for [fast, warm, and express reboot](23_reboot_types.md#the-redis-snapshot).
 
 - **Lua script isolation.** Redis executes Lua scripts atomically — no other command can run on the same instance while a script is in progress. Several IPC patterns in SONiC rely on Lua scripts for atomicity (see [IPC Mechanisms](10_ipc_mechanisms.md)). Keeping unrelated databases on separate instances means a long-running Lua script on one instance does not block operations on another.
 

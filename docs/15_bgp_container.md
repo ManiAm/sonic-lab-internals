@@ -222,4 +222,4 @@ SONiC cannot use the standard off-the-shelf FRR because it needs custom integrat
 
 ---
 
-**Previous**: [← SAI and Syncd](13_sai_and_syncd.md) · **Next**: [The BGP Route-Download Benchmark →](15_benchmark.md)
+**Previous**: [← The SAI Object Model](14_sai_object_model.md) · **Next**: [The BGP Route-Download Benchmark →](16_benchmark.md)

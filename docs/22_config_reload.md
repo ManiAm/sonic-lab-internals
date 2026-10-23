@@ -1,6 +1,6 @@
 # Config Reload
 
-> **Prerequisites**: [Configuration Management](20_configuration_management.md) (CONFIG_DB, config_db.json, and the configuration flow) and [Container Run Time](05_container_run_time.md) (systemd lifecycle and service dependencies).
+> **Prerequisites**: [Configuration Management](21_configuration_management.md) (CONFIG_DB, config_db.json, and the configuration flow) and [Container Run Time](05_container_run_time.md) (systemd lifecycle and service dependencies).
 
 `config reload` replaces the entire running configuration with the contents of a JSON file — by default `/etc/sonic/config_db.json`, or a user-specified file. It stops all SONiC service containers, erases every entry in CONFIG_DB, loads the new file into CONFIG_DB, and restarts the services. Every container re-initializes and the forwarding chip (ASIC) is reprogrammed from scratch.
 
@@ -158,4 +158,4 @@ How the handoff works:
 
 ---
 
-**Previous**: [← Configuration Management](20_configuration_management.md) · **Next**: [Reboot Types →](22_reboot_types.md)
+**Previous**: [← Configuration Management](21_configuration_management.md) · **Next**: [Reboot Types →](23_reboot_types.md)

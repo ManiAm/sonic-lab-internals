@@ -2,7 +2,7 @@
 
 # Running the BGP Route-Download Benchmark
 
-This guide is the hands-on companion to [The BGP Route-Download Benchmark](../docs/15_benchmark.md), which explains the pipeline, defines the metrics, and presents measured results. Everything here is procedure: what tools you need, how to set them up, and the exact steps to run a benchmark on a SONiC switch. All scripts referenced below live in this directory (`benchmark/`).
+This guide is the hands-on companion to [The BGP Route-Download Benchmark](../docs/16_benchmark.md), which explains the pipeline, defines the metrics, and presents measured results. Everything here is procedure: what tools you need, how to set them up, and the exact steps to run a benchmark on a SONiC switch. All scripts referenced below live in this directory (`benchmark/`).
 
 ---
 
@@ -52,7 +52,7 @@ It detects three events automatically:
 
 The output is a machine-readable `/tmp/asic_results.json` with per-sample data and summary timestamps. This is where the download rate and end-to-end rate come from.
 
-**RIB-IN capture.** The `RIBIN_COMPLETE` event and per-sample `received` fields in `asic_results.json` provide the [RIB-IN convergence](../docs/15_benchmark.md#rib-in-convergence--a-different-kind-of-metric) measurement. The [measured results](../docs/15_benchmark.md#measured-results) use this dual-counter data (CRM for ASIC programming, `pfxRcd` for RIB-IN). Precision caveat: with ~2 s effective polling and 1 s established-epoch granularity, the RIB-IN timestamp is coarse — quote it as "a few seconds," not to the millisecond.
+**RIB-IN capture.** The `RIBIN_COMPLETE` event and per-sample `received` fields in `asic_results.json` provide the [RIB-IN convergence](../docs/16_benchmark.md#rib-in-convergence--a-different-kind-of-metric) measurement. The [measured results](../docs/16_benchmark.md#measured-results) use this dual-counter data (CRM for ASIC programming, `pfxRcd` for RIB-IN). Precision caveat: with ~2 s effective polling and 1 s established-epoch granularity, the RIB-IN timestamp is coarse — quote it as "a few seconds," not to the millisecond.
 
 *Why CRM counters?* They are lightweight and non-intrusive — see [Anatomy of a Measurement](#anatomy-of-a-measurement) for why Redis `KEYS` scans are unsuitable for continuous polling.
 
@@ -177,7 +177,7 @@ All scripts live in this directory and are introduced in [The Supporting Toolkit
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The pipeline data flow is covered in detail in [100k Routes Through the Pipeline](../docs/15_benchmark.md#100k-routes-through-the-pipeline--a-concrete-example).
+The pipeline data flow is covered in detail in [100k Routes Through the Pipeline](../docs/16_benchmark.md#100k-routes-through-the-pipeline--a-concrete-example).
 
 ## What You Need
 
@@ -271,7 +271,7 @@ Three sources, all on the switch's own clock (never mix your machine's clock wit
 - `/var/log/swss/swss.rec` — orchagent's operation log (see [The Supporting Toolkit](#the-supporting-toolkit) for details). Search for `ROUTE_TABLE ... SET` lines — the SAI-level entries (`SAI_OBJECT_TYPE_ROUTE_ENTRY`) live in `sairedis.rec`, not here.
 - `vtysh -c 'show bgp neighbors <YOUR_IP> json'` — the `bgpTimerUpEstablishedEpoch` field gives the session-established moment (1-second granularity).
 
-Plug these into the formulas from [Measuring Route-Download Speed](../docs/15_benchmark.md#measuring-route-download-speed--two-rates): `asic_results.json` provides CRM-based `first_route_time` and `total_time` (hardware-verified); the established epoch from `bgp_neighbor.json` is `t_bgp_session_established`; `swss.rec` timestamps give the orchagent processing span (a per-stage diagnostic, not the hardware-verified window). Use `compute_metrics.py` to combine all sources correctly.
+Plug these into the formulas from [Measuring Route-Download Speed](../docs/16_benchmark.md#measuring-route-download-speed--two-rates): `asic_results.json` provides CRM-based `first_route_time` and `total_time` (hardware-verified); the established epoch from `bgp_neighbor.json` is `t_bgp_session_established`; `swss.rec` timestamps give the orchagent processing span (a per-stage diagnostic, not the hardware-verified window). Use `compute_metrics.py` to combine all sources correctly.
 
 ## Step 7 — Repeat and Drain
 
