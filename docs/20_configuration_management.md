@@ -66,7 +66,7 @@ A composite key such as `Vlan100|Ethernet4` already contains the separator. The 
 
 > The reason CONFIG_DB uses `|` instead of the more conventional `:` is covered in [Core Redis Databases](08_redis_databases.md#config_db).
 
-The file is also the unit you back up. Copying it to another switch of the same platform and HwSKU (the hardware SKU that defines the port layout and default speeds) reproduces the configuration, because port names and speeds come from that HwSKU. See [Platform Configuration](17_platform_configuration.md).
+The file is also the unit you back up. Copying it to another switch of the same platform and HwSKU (the hardware SKU that defines the port layout and default speeds) reproduces the configuration, because port names and speeds come from that HwSKU. See [Platform Configuration](18_platform_configuration.md).
 
 ## How CONFIG_DB Is Populated at Boot
 
@@ -74,7 +74,7 @@ The database container is the first container to start. Once its Redis instances
 
 **Clean first boot or image upgrade.** The file `/etc/sonic/config_db.json` does not exist yet (or belongs to an older release). The host service `config-setup` takes over:
 
-- On a **clean install**, `config-setup` calls `sonic-cfggen` to read the platform seed files (`platform.json` / `port_config.ini`), generates `/etc/sonic/config_db.json`, and loads it into CONFIG_DB with `config reload`. The seed files are described in [Platform Configuration](17_platform_configuration.md#from-files-to-a-running-switch--who-reads-what-when).
+- On a **clean install**, `config-setup` calls `sonic-cfggen` to read the platform seed files (`platform.json` / `port_config.ini`), generates `/etc/sonic/config_db.json`, and loads it into CONFIG_DB with `config reload`. The seed files are described in [Platform Configuration](18_platform_configuration.md#from-files-to-a-running-switch--who-reads-what-when).
 - On an **upgrade from an older image**, `config-setup` copies the old configuration, reloads it, and runs the database schema migrator to update any entries to the current release's expected format.
 
 After the file exists, it is not regenerated. The seed files are read again only when the saved file is absent.
@@ -187,7 +187,7 @@ sudo config reload -y
 sudo config reload -y /tmp/new_config.json
 ```
 
-> The step-by-step sequence is in [Config Reload](20_config_reload.md).
+> The step-by-step sequence is in [Config Reload](21_config_reload.md).
 
 > After `config reload` from a path other than the boot file, CONFIG_DB matches that path while `/etc/sonic/config_db.json` still holds the previous configuration. The next boot loads the boot file. Run `config save` when the new configuration should survive a reboot.
 
@@ -310,7 +310,7 @@ APPL_DB  →  orchagent  →  ASIC_DB  →  syncd  →  ASIC
 
 > Which daemon owns which table is listed in [The SWSS Container](11_swss_container.md#manager-daemons-mgrd).
 
-**Host services** read other tables and apply them on the host itself: hostname, DNS, NTP, syslog, and the management interface. They do not write APPL_DB. See [Host Services](18_host_services.md#boot-time-configuration-services).
+**Host services** read other tables and apply them on the host itself: hostname, DNS, NTP, syslog, and the management interface. They do not write APPL_DB. See [Host Services](19_host_services.md#boot-time-configuration-services).
 
 **Feature containers** read their own tables and build their process configuration. BGP is the common case: the BGP container renders FRR's configuration from CONFIG_DB. Learned routes reach the ASIC later, through `fpmsyncd` and APPL_DB, which is a different path from the manager-daemon path above. See [The BGP Container](14_bgp_container.md).
 
@@ -381,4 +381,4 @@ The speed field is now updated in CONFIG_DB, but `syncd` has not been restarted.
 
 ---
 
-**Previous**: [← Host Services](18_host_services.md) · **Next**: [Config Reload →](20_config_reload.md)
+**Previous**: [← Host Services](19_host_services.md) · **Next**: [Config Reload →](21_config_reload.md)

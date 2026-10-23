@@ -28,13 +28,14 @@ Read in order — each document builds on the concepts from the previous ones.
 | 13 | [SAI and Syncd](docs/13_sai_and_syncd.md) | Switch Abstraction Interface, meta layer, syncd processing, VID/RID |
 | 14 | [The BGP Container and FRR](docs/14_bgp_container.md) | FRRouting, zebra, fpmsyncd, route programming, RIB/FIB mapping, unified/split mode |
 | 15 | [The BGP Route-Download Benchmark](docs/15_benchmark.md) | Measuring route programming rate end-to-end, pipeline stages, tooling, and measured results |
-| 16 | [The PMON Container](docs/16_pmon_container.md) | Platform Monitor — Platform API, vendor plugins, xcvrd, psud, thermalctld, ledd, and hardware monitoring |
-| 17 | [Platform Configuration](docs/17_platform_configuration.md) | The device/ hierarchy, ONIE platform strings, HwSKU folders, port_config.ini, platform.json, and how platform files seed CONFIG_DB |
-| 18 | [Host Services](docs/18_host_services.md) | System health monitoring (healthd), monit, watchdog control, and other host-level systemd services |
-| 19 | [Configuration Management](docs/19_configuration_management.md) | config_db.json, CLI, YANG validation, save, load, patch, replace, and reload |
-| 20 | [Config Reload](docs/20_config_reload.md) | CONFIG_DB flush and reload, service stop/start order, delayed service start, config reload vs alternatives |
-| 21 | [Reboot Types](docs/21_reboot_types.md) | Cold, soft, fast, warm, and express reboot comparison |
-| 22 | [Warm Reboot Deep Dive](docs/22_warm_reboot.md) | Pre-shutdown state saving, kexec kernel transition, reconciliation, warmboot-finalizer, container-level warm restart |
-| 23 | [State Interactions](docs/23_state_interactions.md) | End-to-end data flows for routing, port events, VLAN, ARP |
-| 24 | [Logging](docs/24_logging.md) | Syslog, rsyslog routing, SWSS logging macros, SAI recording, log rotation, runtime tuning, techsupport, core dumps |
-| 25 | [Troubleshooting](docs/25_troubleshooting.md) | Debugging techniques for common SONiC problems |
+| 16 | [Load Balancing](docs/16_load_balancing.md) | ECMP in SONiC — SAI next-hop group types, routeorch, weighted ECMP (WCMP), fine-grained ECMP, class-based forwarding, and the full weight pipeline |
+| 17 | [The PMON Container](docs/17_pmon_container.md) | Platform Monitor — Platform API, vendor plugins, xcvrd, psud, thermalctld, ledd, and hardware monitoring |
+| 18 | [Platform Configuration](docs/18_platform_configuration.md) | The device/ hierarchy, ONIE platform strings, HwSKU folders, port_config.ini, platform.json, and how platform files seed CONFIG_DB |
+| 19 | [Host Services](docs/19_host_services.md) | System health monitoring (healthd), monit, watchdog control, and other host-level systemd services |
+| 20 | [Configuration Management](docs/20_configuration_management.md) | config_db.json, CLI, YANG validation, save, load, patch, replace, and reload |
+| 21 | [Config Reload](docs/21_config_reload.md) | CONFIG_DB flush and reload, service stop/start order, delayed service start, config reload vs alternatives |
+| 22 | [Reboot Types](docs/22_reboot_types.md) | Cold, soft, fast, warm, and express reboot comparison |
+| 23 | [Warm Reboot Deep Dive](docs/23_warm_reboot.md) | Pre-shutdown state saving, kexec kernel transition, reconciliation, warmboot-finalizer, container-level warm restart |
+| 24 | [State Interactions](docs/24_state_interactions.md) | End-to-end data flows for routing, port events, VLAN, ARP |
+| 25 | [Logging](docs/25_logging.md) | Syslog, rsyslog routing, SWSS logging macros, SAI recording, log rotation, runtime tuning, techsupport, core dumps |
+| 26 | [Troubleshooting](docs/26_troubleshooting.md) | Debugging techniques for common SONiC problems |
