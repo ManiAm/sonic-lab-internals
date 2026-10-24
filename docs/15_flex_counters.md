@@ -90,23 +90,20 @@ The sections that follow examine each step in detail.
 The operator configures counter groups through the `FLEX_COUNTER_TABLE` in CONFIG_DB. Each entry names a group and sets its polling interval and status:
 
 ```
-CONFIG_DB> HGETALL "FLEX_COUNTER_TABLE|PORT"
-1) "POLL_INTERVAL"
-2) "1000"
-3) "FLEX_COUNTER_STATUS"
-4) "enable"
+admin@sonic:~$ sonic-db-cli CONFIG_DB HGETALL "FLEX_COUNTER_TABLE|PORT"
+{'POLL_INTERVAL': '1000', 'FLEX_COUNTER_STATUS': 'enable'}
 ```
 
 This tells the system: poll the `PORT_STAT` group every 1000 milliseconds. That group collects per-port traffic and error statistics from the ASIC — for example:
 
-| SAI stat ID | What it measures |
-|---|---|
-| `SAI_PORT_STAT_IF_IN_OCTETS` | Total bytes received |
-| `SAI_PORT_STAT_IF_OUT_OCTETS` | Total bytes transmitted |
+| SAI stat ID                      | What it measures         |
+|----------------------------------|--------------------------|
+| `SAI_PORT_STAT_IF_IN_OCTETS`     | Total bytes received     |
+| `SAI_PORT_STAT_IF_OUT_OCTETS`    | Total bytes transmitted  |
 | `SAI_PORT_STAT_IF_IN_UCAST_PKTS` | Unicast packets received |
-| `SAI_PORT_STAT_IF_IN_ERRORS` | Receive errors |
-| `SAI_PORT_STAT_IF_IN_DISCARDS` | Ingress packets dropped |
-| `SAI_PORT_STAT_IF_OUT_DISCARDS` | Egress packets dropped |
+| `SAI_PORT_STAT_IF_IN_ERRORS`     | Receive errors           |
+| `SAI_PORT_STAT_IF_IN_DISCARDS`   | Ingress packets dropped  |
+| `SAI_PORT_STAT_IF_OUT_DISCARDS`  | Egress packets dropped   |
 
 The CLI command `counterpoll show` displays all groups:
 
@@ -127,7 +124,7 @@ TUNNEL_STAT                 10000               enable
 
 > **Naming note:** CONFIG_DB uses short key names (`PORT`, `QUEUE`), while the `counterpoll` CLI and FLEX_COUNTER_DB use suffixed names (`PORT_STAT`, `QUEUE_STAT`, `PORT_STAT_COUNTER`). These all refer to the same group — the naming differs by context, not by meaning.
 
-The `counterpoll` CLI writes to CONFIG_DB:
+Besides inspecting with `counterpoll show`, the operator can change intervals or enable/disable groups with `counterpoll` commands. Under the hood, these write to CONFIG_DB:
 
 ```bash
 counterpoll port interval 2000       # change port polling to 2 seconds
@@ -136,7 +133,9 @@ counterpoll queue disable            # stop polling queue counters
 
 ### FlexCounterOrch: The Bridge
 
-`FlexCounterOrch` subscribes to `FLEX_COUNTER_TABLE` in CONFIG_DB. When a group's interval or status changes, it writes the updated configuration to FLEX_COUNTER_DB, where syncd can pick it up. When a group is enabled, `FlexCounterOrch` also triggers the managing orch to populate the OID lists — for example, enabling the `PORT` group causes `PortsOrch` to call `generatePortCounterMap()`, which writes each port's OID and stat ID list to FLEX_COUNTER_DB. `FlexCounterOrch` does not poll any counters itself — it relays configuration and triggers OID registration.
+`FlexCounterOrch` subscribes to `FLEX_COUNTER_TABLE` in CONFIG_DB. When a group's interval or status changes, it writes the updated configuration to FLEX_COUNTER_DB, where syncd can pick it up. When a group is enabled, `FlexCounterOrch` also triggers the managing orch to populate the OID lists — for example, enabling the `PORT` group causes `PortsOrch` to call `generatePortCounterMap()`, which writes each port's OID and stat ID list to FLEX_COUNTER_DB.
+
+> `FlexCounterOrch` does not poll any counters itself — it relays configuration and triggers OID registration.
 
 ### FLEX_COUNTER_DB: The Polling Contract
 
@@ -145,13 +144,10 @@ FLEX_COUNTER_DB holds two kinds of entries:
 **1. Group configuration** — the polling parameters for each counter group:
 
 ```
-FLEX_COUNTER_DB> HGETALL "FLEX_COUNTER_GROUP_TABLE:PORT_STAT_COUNTER"
-1) "POLL_INTERVAL"
-2) "1000"
-3) "FLEX_COUNTER_STATUS"
-4) "enable"
-5) "STATS_MODE"
-6) "STATS_MODE_READ"
+admin@sonic:~$ sonic-db-cli FLEX_COUNTER_DB HGETALL "FLEX_COUNTER_GROUP_TABLE:PORT_STAT_COUNTER"
+{'POLL_INTERVAL': '1000',
+ 'FLEX_COUNTER_STATUS': 'enable',
+ 'STATS_MODE': 'STATS_MODE_READ'}
 ```
 
 `STATS_MODE` controls whether counters are just read (`STATS_MODE_READ`) or read and cleared in the same call (`STATS_MODE_READ_AND_CLEAR`). This maps directly to the SAI `get_*_stats_ext` mode described in [Stats](14_sai_object_model.md#stats).
@@ -159,9 +155,8 @@ FLEX_COUNTER_DB> HGETALL "FLEX_COUNTER_GROUP_TABLE:PORT_STAT_COUNTER"
 **2. OID lists** — which objects to poll in each group:
 
 ```
-FLEX_COUNTER_DB> HGETALL "FLEX_COUNTER_TABLE:PORT_STAT_COUNTER:oid:0x1000000000003"
-1) "PORT_COUNTER_ID_LIST"
-2) "SAI_PORT_STAT_IF_IN_OCTETS,SAI_PORT_STAT_IF_OUT_OCTETS,SAI_PORT_STAT_IF_IN_ERRORS,..."
+admin@sonic:~$ sonic-db-cli FLEX_COUNTER_DB HGETALL "FLEX_COUNTER_TABLE:PORT_STAT_COUNTER:oid:0x1000000000003"
+{'PORT_COUNTER_ID_LIST': 'SAI_PORT_STAT_IF_IN_OCTETS,SAI_PORT_STAT_IF_OUT_OCTETS,SAI_PORT_STAT_IF_IN_ERRORS,...'}
 ```
 
 Each key identifies one SAI object (by OID). The value lists the specific stat IDs to read for that object. These entries are written by the orch that manages the object type — `PortsOrch` writes port counter OIDs, `BufferOrch` writes buffer pool OIDs, and so on. When a port is created, `PortsOrch` adds its OID to FLEX_COUNTER_DB. When a port is removed, the OID is deleted.
@@ -169,7 +164,7 @@ Each key identifies one SAI object (by OID). The value lists the specific stat I
 
 ## Syncd's FlexCounter Threads
 
-Syncd's main loop subscribes to FLEX_COUNTER_DB via `ConsumerTable`. When it receives a group configuration or an OID list entry, it creates or updates a `FlexCounter` instance for that group. Each instance starts its own thread and stores the OID list and stat IDs in memory.
+Syncd's main loop subscribes to FLEX_COUNTER_DB via [`ConsumerTable`](10_ipc_mechanisms.md#pattern-3-producertable--consumertable-queue-based). When it receives a group configuration or an OID list entry, it creates or updates a `FlexCounter` instance for that group. Each instance starts its own thread and stores the OID list and stat IDs in memory.
 
 On each polling cycle, the thread:
 
@@ -178,8 +173,6 @@ On each polling cycle, the thread:
 3. **Writes the results** to COUNTERS_DB.
 
 The thread then sleeps for the configured interval using a condition variable, which allows the interval to be changed without restarting the thread.
-
-Because each counter group runs on its own thread, polling does not interfere with syncd's main loop (which processes SAI create/set/remove calls from ASIC_DB) or with orchagent's processing.
 
 ### Thread Isolation
 
@@ -196,15 +189,11 @@ Both call into the vendor SAI, so the vendor implementation must be thread-safe 
 Each FlexCounter thread writes counter values to COUNTERS_DB using the SAI OID as the key:
 
 ```
-COUNTERS_DB> HGETALL "COUNTERS:oid:0x1000000000003"
- 1) "SAI_PORT_STAT_IF_IN_OCTETS"
- 2) "4829174021"
- 3) "SAI_PORT_STAT_IF_OUT_OCTETS"
- 4) "3918264553"
- 5) "SAI_PORT_STAT_IF_IN_UCAST_PKTS"
- 6) "12847291"
- 7) "SAI_PORT_STAT_IF_IN_ERRORS"
- 8) "0"
+admin@sonic:~$ sonic-db-cli COUNTERS_DB HGETALL "COUNTERS:oid:0x1000000000003"
+{'SAI_PORT_STAT_IF_IN_OCTETS': '4829174021',
+ 'SAI_PORT_STAT_IF_OUT_OCTETS': '3918264553',
+ 'SAI_PORT_STAT_IF_IN_UCAST_PKTS': '12847291',
+ 'SAI_PORT_STAT_IF_IN_ERRORS': '0'}
 ```
 
 These are raw values from the ASIC. Each field is a SAI stat ID and each value is a 64-bit number. For cumulative counters like the ones shown above, the value has been incrementing since the port was created (or since the last clear). For watermark counters the value represents the peak since the last clear, and for current counters it reflects the instantaneous state at the time of the read.
@@ -214,11 +203,9 @@ These are raw values from the ASIC. Each field is a SAI stat ID and each value i
 The counter keys use SAI OIDs, which are not human-readable. To bridge between OIDs and friendly names, SONiC maintains **name map** tables in COUNTERS_DB:
 
 ```
-COUNTERS_DB> HGETALL "COUNTERS_PORT_NAME_MAP"
-1) "Ethernet0"
-2) "oid:0x1000000000003"
-3) "Ethernet4"
-4) "oid:0x1000000000004"
+admin@sonic:~$ sonic-db-cli COUNTERS_DB HGETALL "COUNTERS_PORT_NAME_MAP"
+{'Ethernet0': 'oid:0x1000000000003',
+ 'Ethernet4': 'oid:0x1000000000004'}
 ```
 
 The CLI and telemetry consumers look up the OID from the name map, then read the counter values using that OID. Common name maps include:
@@ -273,7 +260,17 @@ Here is the full lifecycle of a port counter, from operator configuration to CLI
 
 5. Every second, the FlexCounter thread iterates through its in-memory port OID list, calls `sai_port_api->get_port_stats()` for each one, and writes the results to COUNTERS_DB.
 
-6. The operator runs `show interfaces counters` → the CLI reads `COUNTERS_PORT_NAME_MAP` to find the OID for each port, reads the counter values from COUNTERS_DB, computes deltas from the previous snapshot, and displays the result.
+6. The operator runs `show interfaces counters` → the CLI reads `COUNTERS_PORT_NAME_MAP` to find the OID for each port, reads the counter values from COUNTERS_DB, computes deltas from the previous snapshot, and displays the result:
+
+```
+admin@sonic:~$ show interfaces counters
+      IFACE    STATE    RX_OK     RX_BPS    RX_UTIL    RX_ERR    RX_DRP    RX_OVR    TX_OK     TX_BPS    TX_UTIL    TX_ERR    TX_DRP    TX_OVR
+-----------  -------  -------  ---------  ---------  --------  --------  --------  -------  ---------  ---------  --------  --------  --------
+  Ethernet0        U  gillions  gillions      0.00%         0         0         0  gillions  gillions      0.00%         0         0         0
+  Ethernet4        U        0    0.00 B/s     0.00%         0         0         0        0    0.00 B/s     0.00%         0         0         0
+```
+
+Every column in this output traces back to a SAI stat in COUNTERS_DB: `RX_OK` comes from `SAI_PORT_STAT_IF_IN_UCAST_PKTS`, `RX_BPS` is computed from `SAI_PORT_STAT_IF_IN_OCTETS` deltas, `RX_ERR` from `SAI_PORT_STAT_IF_IN_ERRORS`, and so on.
 
 ---
 

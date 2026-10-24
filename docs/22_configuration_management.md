@@ -202,7 +202,7 @@ sonic-cfggen -j /tmp/my_config.json --write-to-db
 A direct Redis write does the same thing one field at a time. From [Accessing the Database](07_database_container.md#accessing-the-database):
 
 ```bash
-redis-cli -n 4 HSET "PORT|Ethernet0" "admin_status" "down"
+sonic-db-cli CONFIG_DB HSET "PORT|Ethernet0" "admin_status" "down"
 ```
 
 These are useful in the lab when you need to see the raw database effect. Neither tool validates the data against YANG models, so they can store a value the schema does not allow. They also leave `/etc/sonic/config_db.json` unchanged.

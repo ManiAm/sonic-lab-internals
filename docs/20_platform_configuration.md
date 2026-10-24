@@ -181,9 +181,9 @@ Separately from the CONFIG_DB path, syncd loads the ASIC vendor config named by 
 Practical consequence worth remembering: **editing `port_config.ini` on a deployed switch does nothing** until the PORT table is re-generated. To inspect reality, read the runtime:
 
 ```
-show interfaces status                      # live port state
-redis-cli -n 4 keys "PORT|*"                # PORT table keys in CONFIG_DB
-redis-cli -n 4 hgetall "PORT|Ethernet0"     # lanes/speed/alias of one port
+show interfaces status                                    # live port state
+sonic-db-cli CONFIG_DB KEYS "PORT|*"                      # PORT table keys in CONFIG_DB
+sonic-db-cli CONFIG_DB HGETALL "PORT|Ethernet0"           # lanes/speed/alias of one port
 ```
 
 ## Switching to a Different HwSKU

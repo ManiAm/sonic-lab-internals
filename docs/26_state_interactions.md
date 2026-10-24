@@ -308,19 +308,19 @@ Knowing these flows helps you pinpoint exactly where things break:
 
 ```bash
 # Check if entries are pending in APPL_DB (orchagent not processing)
-redis-cli -n 0 keys '_*'
+sonic-db-cli APPL_DB KEYS '_*'
 
 # Check ASIC_DB queue (syncd not processing)
-redis-cli -n 1 keys '_*'
+sonic-db-cli ASIC_DB KEYS '_*'
 
 # Check port initialization state
-redis-cli -n 6 hgetall "PORT_TABLE|Ethernet0"
+sonic-db-cli STATE_DB HGETALL "PORT_TABLE|Ethernet0"
 
 # Check current route in APPL_DB
-redis-cli -n 0 hgetall "ROUTE_TABLE:10.1.0.0/24"
+sonic-db-cli APPL_DB HGETALL "ROUTE_TABLE:10.1.0.0/24"
 
 # Check if route reached ASIC_DB
-redis-cli -n 1 keys '*ROUTE*10.1.0.0*'
+sonic-db-cli ASIC_DB KEYS '*ROUTE*10.1.0.0*'
 ```
 
 ---
