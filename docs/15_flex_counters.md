@@ -65,6 +65,8 @@ The common counter groups are:
 
 Operators can change these intervals through CONFIG_DB. The watermark and buffer drop groups default to longer intervals because the underlying counters change less frequently and their SAI calls can be more expensive on some platforms.
 
+For the complete list of SAI stat IDs polled by each group, see [Flex Counter Groups — SAI Stat Reference](15a_flex_counter_groups_reference.md).
+
 
 ## Architecture
 
