@@ -50,7 +50,6 @@ The common counter groups are:
 | Group | SAI object type | What it counts | Default interval |
 |---|---|---|---|
 | `PORT_STAT` | Port | Bytes and packets in/out, errors, drops | 1 s |
-| `PORT_RATES` | Port | Computed rates (bytes/sec, packets/sec) | 1 s |
 | `QUEUE_STAT` | Queue | Per-queue packets, bytes, and drops | 10 s |
 | `QUEUE_WATERMARK_STAT` | Queue | Peak queue depth since last clear | 60 s |
 | `PG_WATERMARK_STAT` | Ingress priority group | Peak priority-group buffer usage | 60 s |
@@ -221,20 +220,91 @@ The CLI and telemetry consumers look up the OID from the name map, then read the
 
 These maps are populated by the orchs when they create the SAI objects. For example, `PortsOrch` adds an entry to `COUNTERS_PORT_NAME_MAP` after creating each port.
 
+## Rate Computation: Lua Plugins
+
+The counter groups described above poll raw values from the ASIC — totals like "bytes received" or "packets dropped." But operators often need derived metrics that require math on top of those raw values: a traffic rate (how many bytes per second?), a utilization percentage (what fraction of link capacity is in use?), or a Bit Error Rate (how many FEC-corrected bits relative to the total bits on the wire?). None of these exist as hardware registers — they must be calculated from the raw counters.
+
+An external script could do this — read the raw counters from Redis, compute the rate, write the result back. But that approach has drawbacks:
+
+- **Multiple round-trips.** Each Redis command (read current value, read previous value, write result) is a separate network call between the script and the Redis server. For hundreds of ports polled every second, these round-trips add up.
+- **No atomicity.** Between reading the current counter and the previous counter, another client could modify the data. The script could compute a rate from inconsistent values.
+- **Extra process to manage.** A separate daemon or cron job needs to be started, monitored, and kept in sync with the polling interval.
+
+SONiC avoids all three problems by using **Redis server-side Lua scripting**. Redis has a built-in Lua interpreter: a client sends a Lua script to Redis via [`EVALSHA`](https://github.com/ManiAm/sonic-lab-redis/blob/master/docs/08_redis_lua_scripting.md), and Redis executes it **inside the server process**. While a Lua script runs, no other client can read or write — the entire script is atomic. All data access happens in-memory with no network round-trips.
+
+Each FlexCounter thread loads its Lua plugin into Redis at startup (via `SCRIPT LOAD`, which returns a SHA hash). On each polling cycle, after writing the raw counters to COUNTERS_DB, the thread calls `EVALSHA` to run the plugin. The plugin reads the current and previous counter values, computes the derived metrics, and writes the results to a separate `RATES` table — all in a single atomic operation inside Redis.
+
+The following Lua plugins are registered as FlexCounter plugins:
+
+| Lua script | Registered by | Counter group | Purpose |
+|---|---|---|---|
+| `port_rates.lua` | PortsOrch | PORT_STAT | Computes per-port TX/RX rates (BPS, PPS) and FEC Bit Error Rates |
+| `port_flr.lua` | PortsOrch | PORT_STAT | Computes Frame Loss Ratio per port |
+| `rif_rates.lua` | IntfsOrch | RIF_STAT | Computes per-RIF TX/RX rates |
+| `tunnel_rates.lua` | VxlanOrch | TUNNEL_STAT | Computes per-tunnel TX/RX rates |
+| `trap_rates.lua` | CoppOrch | FLOW_CNT_TRAP | Computes per-trap TX/RX rates |
+| `watermark_queue.lua` | PortsOrch | QUEUE_WATERMARK | Tracks peak queue occupancy since last clear |
+| `watermark_pg.lua` | PortsOrch | PG_WATERMARK | Tracks peak priority-group occupancy since last clear |
+| `watermark_bufferpool.lua` | BufferOrch | BUFFER_POOL_WATERMARK | Tracks peak buffer-pool occupancy since last clear |
+| `pfc_detect_<platform>.lua` | PfcWdOrch | PFC_WD | Detects PFC storm conditions (platform-specific logic) |
+| `pfc_restore.lua` | PfcWdOrch | PFC_WD | Detects PFC storm recovery |
+| `drop_monitor.lua` | DebugCounterOrch | DEBUG_COUNTER | Monitors debug counter drop events |
+
+> **Note:** Some plugins are vendor-specific. For example, `nvda_port_trim_drop.lua` (NVIDIA trim-packet drop calculation) and `pfc_detect_mellanox.lua` are loaded only on their respective platforms.
+
+### Example: `port_rates.lua`
+
+As a concrete example, the `port_rates.lua` plugin computes the following fields and writes them to `RATES:<port_oid>` in COUNTERS_DB:
+
+| Computed field | Description | How it is derived |
+|---|---|---|
+| `RX_BPS` | Receive bytes per second | Delta of `SAI_PORT_STAT_IF_IN_OCTETS` × (1000 / interval), EWMA-smoothed |
+| `TX_BPS` | Transmit bytes per second | Delta of `SAI_PORT_STAT_IF_OUT_OCTETS` × (1000 / interval), EWMA-smoothed |
+| `RX_PPS` | Receive packets per second | Delta of (`IF_IN_UCAST_PKTS` + `IF_IN_NON_UCAST_PKTS`) × (1000 / interval), EWMA-smoothed |
+| `TX_PPS` | Transmit packets per second | Delta of (`IF_OUT_UCAST_PKTS` + `IF_OUT_NON_UCAST_PKTS`) × (1000 / interval), EWMA-smoothed |
+| `FEC_PRE_BER` | Pre-FEC Bit Error Rate | Delta of `SAI_PORT_STAT_IF_IN_FEC_CORRECTED_BITS` / (lanes × serdes speed × interval) |
+| `FEC_POST_BER` | Post-FEC Bit Error Rate | Delta of `SAI_PORT_STAT_IF_IN_FEC_NOT_CORRECTABLE_FRAMES` × statistical average / (lanes × serdes speed × interval) |
+| `FEC_PRE_BER_MAX` | Peak pre-FEC BER since boot | High-water mark of `FEC_PRE_BER` |
+| `FEC_MAX_T` | Highest non-zero FEC codeword error bin (S0–S15) | Scans `SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S0`–`S15` |
+
+The EWMA (Exponentially Weighted Moving Average) smoothing factor `alpha` is configured via `RATES:PORT:PORT_ALPHA` in COUNTERS_DB. Rate values are smoothed as: `rate = alpha × new_rate + (1 − alpha) × old_rate`. The other rate plugins (`rif_rates.lua`, `tunnel_rates.lua`, `trap_rates.lua`) follow the same pattern: read raw counters, compute deltas, apply EWMA smoothing, and write derived values.
 
 ## Consumers
 
 Multiple components read COUNTERS_DB:
 
-| Consumer | How it uses counters |
-|---|---|
-| **CLI** (`show interfaces counters`) | Reads COUNTERS_DB, computes deltas since the last read, and displays rates or totals. |
-| **SNMP** (`docker-snmp`) | Maps SNMP MIB OIDs (like `ifInOctets`) to SAI stat IDs in COUNTERS_DB. |
+| Consumer                                 | How it uses counters                   |
+|------------------------------------------|----------------------------------------|
+| **CLI** (`show interfaces counters`)     | Reads raw counters from COUNTERS_DB and pre-computed rates from the [RATES](#rate-computation-lua-plugins) table. |
+| **SNMP** (`docker-snmp`)                 | Maps SNMP MIB OIDs (like `ifInOctets`) to SAI stat IDs in COUNTERS_DB. |
 | **gNMI telemetry** (`docker-sonic-gnmi`) | Streams counter values to external collectors at the configured interval. |
-| **WatermarkOrch** | Reads watermark counters from COUNTERS_DB and writes user/persistent watermark tables. |
-| **PfcWdOrch** | Reads PFC counters to detect priority-flow-control storms. |
+| **WatermarkOrch**                        | Reads watermark counters from COUNTERS_DB and writes user/persistent watermark tables. |
+| **PfcWdOrch**                            | Reads PFC counters to detect priority-flow-control storms. |
 
 None of these consumers call SAI directly. They all read from COUNTERS_DB, which decouples counter consumption from counter collection.
+
+### `show interfaces counters` — Column Breakdown
+
+Each column in the `show interfaces counters` output maps to a specific source in COUNTERS_DB:
+
+| Column | What it shows | Source table | SAI stat ID or computed field |
+|---|---|---|---|
+| `IFACE` | Port name (e.g. `Ethernet0`) | `COUNTERS_PORT_NAME_MAP` | Key lookup — maps name to OID |
+| `STATE` | Admin/oper state (`U` = up, `D` = down) | APPL_DB `PORT_TABLE` | `admin_status`, `oper_status` |
+| `RX_OK` | Total packets received | `COUNTERS:oid:...` | `SAI_PORT_STAT_IF_IN_UCAST_PKTS` + `SAI_PORT_STAT_IF_IN_NON_UCAST_PKTS` |
+| `RX_BPS` | Receive rate (bytes/sec) | `RATES:oid:...` | `RX_BPS` — computed by `port_rates.lua` |
+| `RX_UTIL` | Receive utilization (%) | `RATES:oid:...` | `RX_UTIL` — computed by `port_rates.lua` |
+| `RX_ERR` | Receive errors | `COUNTERS:oid:...` | `SAI_PORT_STAT_IF_IN_ERRORS` |
+| `RX_DRP` | Ingress packets dropped | `COUNTERS:oid:...` | `SAI_PORT_STAT_IF_IN_DISCARDS` |
+| `RX_OVR` | Receive oversize packets | `COUNTERS:oid:...` | `SAI_PORT_STAT_ETHER_RX_OVERSIZE_PKTS` |
+| `TX_OK` | Total packets transmitted | `COUNTERS:oid:...` | `SAI_PORT_STAT_IF_OUT_UCAST_PKTS` + `SAI_PORT_STAT_IF_OUT_NON_UCAST_PKTS` |
+| `TX_BPS` | Transmit rate (bytes/sec) | `RATES:oid:...` | `TX_BPS` — computed by `port_rates.lua` |
+| `TX_UTIL` | Transmit utilization (%) | `RATES:oid:...` | `TX_UTIL` — computed by `port_rates.lua` |
+| `TX_ERR` | Transmit errors | `COUNTERS:oid:...` | `SAI_PORT_STAT_IF_OUT_ERRORS` |
+| `TX_DRP` | Egress packets dropped | `COUNTERS:oid:...` | `SAI_PORT_STAT_IF_OUT_DISCARDS` |
+| `TX_OVR` | Transmit oversize packets | `COUNTERS:oid:...` | `SAI_PORT_STAT_ETHER_TX_OVERSIZE_PKTS` |
+
+Columns sourced from the `COUNTERS:oid:...` table (raw SAI stats) show **deltas**, not ever-growing totals. The CLI achieves this by saving a snapshot of all counter values to a local JSON file when the user runs `show interfaces counters -c` (clear). On subsequent runs, it loads that saved snapshot and subtracts it from the current values. If no snapshot file exists, the deltas are calculated against zero (i.e., the raw totals are displayed). The CLI also supports a `-p` (period) flag, which takes two live readings separated by the specified number of seconds and displays the difference. Columns sourced from the `RATES:oid:...` table show pre-computed values written by `port_rates.lua` — no snapshot subtraction is needed for these. Both tables live in COUNTERS_DB.
 
 
 ## Counter Width
@@ -262,17 +332,7 @@ Here is the full lifecycle of a port counter, from operator configuration to CLI
 
 5. Every second, the FlexCounter thread iterates through its in-memory port OID list, calls `sai_port_api->get_port_stats()` for each one, and writes the results to COUNTERS_DB.
 
-6. The operator runs `show interfaces counters` → the CLI reads `COUNTERS_PORT_NAME_MAP` to find the OID for each port, reads the counter values from COUNTERS_DB, computes deltas from the previous snapshot, and displays the result:
-
-```
-admin@sonic:~$ show interfaces counters
-      IFACE    STATE    RX_OK     RX_BPS    RX_UTIL    RX_ERR    RX_DRP    RX_OVR    TX_OK     TX_BPS    TX_UTIL    TX_ERR    TX_DRP    TX_OVR
------------  -------  -------  ---------  ---------  --------  --------  --------  -------  ---------  ---------  --------  --------  --------
-  Ethernet0        U  gillions  gillions      0.00%         0         0         0  gillions  gillions      0.00%         0         0         0
-  Ethernet4        U        0    0.00 B/s     0.00%         0         0         0        0    0.00 B/s     0.00%         0         0         0
-```
-
-Every column in this output traces back to a SAI stat in COUNTERS_DB: `RX_OK` comes from `SAI_PORT_STAT_IF_IN_UCAST_PKTS`, `RX_BPS` is computed from `SAI_PORT_STAT_IF_IN_OCTETS` deltas, `RX_ERR` from `SAI_PORT_STAT_IF_IN_ERRORS`, and so on.
+6. The operator runs `show interfaces counters` → the CLI reads `COUNTERS_PORT_NAME_MAP` to find the OID for each port, reads the counter values from COUNTERS_DB, computes deltas from the previous snapshot, and displays the result.
 
 ---
 
