@@ -2,23 +2,110 @@
 
 > **Prerequisites**: [SAI Object Model](14_sai_object_model.md) — understand SAI object types, attribute semantics, and the group+member pattern. [BGP Container](16_bgp_container.md) — understand the FRR integration and `bgpcfgd`.
 
-For a comprehensive treatment of data center fabric load balancing — ECMP fundamentals, hash polarization, adaptive routing, and RDMA-specific constraints — see [DC-Load-Balancing](https://github.com/ManiAm/DC-Load-Balancing). This document focuses on how SONiC implements ECMP-based load balancing end-to-end: which SAI object types the ASIC exposes, which orchagent modules consume them, and how the control-plane pipeline (FRR → kernel → fpmsyncd → APPL_DB → orchagent → SAI) carries routes and weights into hardware.
+For a comprehensive treatment of data center fabric load balancing — Equal-Cost Multi-Path (ECMP) fundamentals, hash polarization, adaptive routing, and RDMA-specific constraints — see [DC-Load-Balancing](https://github.com/ManiAm/DC-Load-Balancing). This document focuses on how SONiC implements ECMP-based load balancing end-to-end: which Switch Abstraction Interface (SAI) object types the ASIC exposes, which orchagent modules consume them, and how the control-plane pipeline (FRR (Free Range Routing) → fpmsyncd → APPL_DB → orchagent → SAI) carries routes and weights into hardware.
+
+
+## Key SAI Objects for Multi-Path Forwarding
+
+Three SAI objects form the foundation of multi-path forwarding in SONiC:
+
+- **Next hop** — represents a single forwarding destination: an IP address reachable through a specific router interface. When a route has only one path, the route entry points directly at a next-hop object.
+
+- **Next-hop group** — represents a set of paths that the ASIC can choose among. A route entry points at a next-hop group instead of a single next hop. The group carries a *type* attribute (e.g., standard ECMP, fine-grain ECMP, class-based) that tells the ASIC how to select a member for each packet.
+
+- **Next-hop group member** — a join object that attaches one next hop to a group. It stores two references: the group's OID (Object Identifier) and the next hop's OID. Adding or removing a member is how SONiC tells the ASIC to add or remove a path from the group.
+
+<img src="../pics/next-hop-group-overview.png" alt="Next-hop group object relationships: route entry, next-hop group, next-hop group members, and next hops" width="900">
+
+The creation order matters: next hops must exist before members can reference them, and the group must exist before members can be added to it. For the full SAI object lifecycle see [Parent and Member](14_sai_object_model.md#parent-and-member).
+
+
+## Hash Configuration
+
+Before any ECMP group type can distribute traffic, the ASIC must hash each packet's header fields to select a group member. For a full treatment of the hash pipeline — how hash fields, seed, offset, and algorithm work together to prevent polarization — see [The ECMP Hash Pipeline](https://github.com/ManiAm/DC-Load-Balancing/blob/master/docs/01_README_LB.md#the-ecmp-hash-pipeline). This section focuses on how SONiC exposes and programs these parameters.
+
+Seed and offset are populated at boot time into `SWITCH_TABLE:switch` in **APPL_DB**, while the hash fields and algorithm are configured through `SWITCH_HASH|GLOBAL` in **CONFIG_DB**. `switchorch` subscribes to both tables and programs the corresponding SAI switch attributes.
+
+| DB | Table | Field | SAI Attribute | Type | Default |
+|---|---|---|---|---|---|
+| APPL_DB | `SWITCH_TABLE:switch` | `ecmp_hash_seed` | `SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_SEED` | uint32 | 0 |
+| APPL_DB | `SWITCH_TABLE:switch` | `ecmp_hash_offset` | `SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_OFFSET` | uint8 | 0 |
+| CONFIG_DB | `SWITCH_HASH\|GLOBAL` | `ecmp_hash` | `SAI_HASH_ATTR_NATIVE_HASH_FIELD_LIST` | list | ASIC default |
+| CONFIG_DB | `SWITCH_HASH\|GLOBAL` | `ecmp_hash_algorithm` | `SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_ALGORITHM` | enum | CRC |
+
+The `ecmp_hash` field is a comma-separated list of packet header fields the ASIC includes in the hash calculation. Supported values: `SRC_IP`, `DST_IP`, `IP_PROTOCOL`, `L4_SRC_PORT`, `L4_DST_PORT`, `SRC_MAC`, `DST_MAC`, `ETHERTYPE`, `VLAN_ID`, `IN_PORT`, `IPV6_FLOW_LABEL`, and their `INNER_*` variants for tunneled traffic. For guidance on when to customize these fields, see [Advanced Configuration: Customizing the Hash](https://github.com/ManiAm/DC-Load-Balancing/blob/master/docs/01_README_LB.md#advanced-configuration-customizing-the-hash).
+
+Equivalent `lag_hash_seed`, `lag_hash_offset`, `lag_hash`, and `lag_hash_algorithm` fields exist for Link Aggregation Group (LAG) hashing and follow the same pattern.
+
+### Seed and Offset Assignment
+
+Neither value is chosen randomly — both are **deterministic values derived from the switch's role in the fabric**. At image build time, the Jinja2 template `switch.json.j2` (in `dockers/docker-orchagent/`) maps `DEVICE_METADATA.localhost.type` to fixed seed and offset values:
+
+| Device Role | Hash Seed | ECMP Offset | LAG Offset |
+|---|---|---|---|
+| ToRRouter | 0 | 0 | 0 |
+| LeafRouter | 10 | 10 | 10 |
+| SpineRouter | 25 | 0 | 0 |
+| FabricSpineRouter | 40 | 0 | 0 |
+| UpperSpineRouter | 50 | 0 | 0 |
+| LowerRegionalHub | 60 | 0 | 0 |
+| FabricRegionalHub | 70 | 0 | 0 |
+| UpperRegionalHub | 80 | 0 | 0 |
+
+On multi-ASIC platforms, the `namespace_id` is added to the base seed so that each ASIC within the same chassis receives a unique value (`hash_seed_value = hash_seed + namespace_id`).
+
+This role-based scheme guarantees that every tier in the fabric uses a different seed — a ToR, its leaf, and its spine will never produce the same hash for the same packet — without requiring the operator to configure anything manually.
+
+### How switchorch Programs These Values
+
+**Seed and offset** — `switchorch` maintains a static map from `SWITCH_TABLE` field names to SAI attributes. When it receives an APPL_DB update (via `doAppSwitchTableTask`), it looks up the field name, parses the value, and calls `sai_switch_api->set_switch_attribute()`:
+
+```cpp
+// switchorch.cpp — attribute map (abridged)
+const map<string, sai_switch_attr_t> switch_attribute_map = {
+    {"ecmp_hash_seed",   SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_SEED},
+    {"lag_hash_seed",    SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_SEED},
+    {"ecmp_hash_offset", SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_OFFSET},
+    {"lag_hash_offset",  SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_OFFSET},
+};
+```
+
+**Hash fields** — `switchorch` subscribes to `SWITCH_HASH` in CONFIG_DB via `doCfgSwitchHashTableTask`. The comma-separated field names in the `ecmp_hash` value are mapped to `sai_native_hash_field_t` enum values by `SwitchHelper::parseSwHash()` and programmed onto the SAI hash object via `setSwitchHashFieldListSai()`:
+
+```cpp
+// switchorch.cpp — programming hash fields into SAI
+attr.id = SAI_HASH_ATTR_NATIVE_HASH_FIELD_LIST;
+attr.value.s32list.list = hfList.data();
+attr.value.s32list.count = static_cast<sai_uint32_t>(hfList.size());
+sai_hash_api->set_hash_attribute(oid, &attr);
+```
+
+**Algorithm** — read from the same `SWITCH_HASH` table in CONFIG_DB. `SwitchHelper::parseSwHash()` maps the string value (e.g., `"CRC"`, `"XOR"`) to a `sai_hash_algorithm_t` enum and `setSwitchHashAlgorithmSai()` programs it into the ASIC:
+
+```cpp
+// switchorch.cpp — programming algorithm into SAI
+attr.id = SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_ALGORITHM;
+attr.value.s32 = static_cast<sai_int32_t>(hash.ecmp_hash_algorithm.value);
+sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+```
 
 
 ## SAI Next-Hop Group Types
 
-Every form of multi-path forwarding in SONiC ultimately programs a **SAI next-hop group** object. SAI defines several group types in `sainexthopgroup.h`, each representing a different forwarding variant. The table below lists every type defined in the SAI header, the SONiC orchagent module that uses it, and its purpose. Each type or family of related types is covered in a dedicated section later in this document.
+The **group type** attribute determines *how the ASIC selects among the members* — whether it hashes the packet and picks a member deterministically (standard ECMP), evaluates members in priority order (ordered ECMP), maps them to fixed bucket positions (fine-grain ECMP), or steers by forwarding class (class-based).
 
-| SAI Group Type | SONiC Orch | Purpose |
-|---|---|---|
-| **Dynamic Unordered ECMP** | `routeorch`, `nhgorch` | Standard ECMP. Members are unordered; the ASIC hashes and selects among them. This is the default type. |
-| **Dynamic Ordered ECMP** | `routeorch`, `vnetorch` | Like standard ECMP, but members are **sorted by priority** (via `SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID`). Used when `ordered_ecmp` is enabled and the ASIC advertises support at init time. |
-| **Fine-Grain ECMP** | `fgnhgorch` | Software-managed, fixed-size bucket array. Supports bank-scoped failover. |
-| **Class-Based** | `cbfnhgorch` | Members are selected by **forwarding class** rather than (or in combination with) hash. Uses a `NEXT_HOP_GROUP_MAP` to map forwarding-class values to member indices. |
-| **ECMP With Members** | `WcmpManager` (P4RT) | Group-level member list and weight list in a single bulk SAI call. Used by the P4Runtime path for weighted ECMP (WCMP). |
-| **Protection** | — | Primary/standby failover group with **software-controlled** switchover. |
-| **HW Protection** | — | Primary/standby failover group with **hardware-controlled** switchover. |
-| **Bridge Port** | `l2nhgorch` | L2 next-hop group for bridge-port forwarding. |
+SAI defines the following group types in `sainexthopgroup.h`:
+
+| SAI Group Type | Purpose |
+|---|---|
+| **Dynamic Unordered ECMP** | Standard ECMP. Members are unordered; the ASIC hashes and selects among them. This is the default type. |
+| **Dynamic Ordered ECMP** | Like standard ECMP, but members are **sorted by priority** (via `SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID`). Used when `ordered_ecmp` is enabled and the ASIC advertises support at init time. |
+| **Fine-Grain ECMP** | Software-managed, fixed-size bucket array. Supports bank-scoped failover. |
+| **Class-Based** | Members are selected by **forwarding class** rather than (or in combination with) hash. Uses a `NEXT_HOP_GROUP_MAP` to map forwarding-class values to member indices. |
+| **ECMP With Members** | Group-level member list and weight list in a single bulk SAI call. Used by the P4Runtime path for weighted ECMP (WCMP). |
+| **Protection** | Primary/standby failover group with **software-controlled** switchover. |
+| **HW Protection** | Primary/standby failover group with **hardware-controlled** switchover. |
+| **Bridge Port** | L2 next-hop group for bridge-port forwarding. |
 
 The SAI enum values for each group type are defined in `sainexthopgroup.h`:
 
@@ -38,81 +125,30 @@ typedef enum _sai_next_hop_group_type_t
 } sai_next_hop_group_type_t;
 ```
 
-## Hash Configuration
-
-Before any ECMP group type can distribute traffic, the ASIC needs to know how to hash packets into buckets. SONiC exposes three knobs — seed, offset, and algorithm — as fields in `SWITCH_TABLE:switch` (APPL_DB). `switchorch` reads these fields and programs the corresponding SAI switch attributes.
-
-| SWITCH_TABLE Field | SAI Attribute | Type | Default | Description |
-|---|---|---|---|---|
-| `ecmp_hash_seed` | `SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_SEED` | uint32 | 0 | Value mixed into the hash computation to decorrelate results across switches. |
-| `ecmp_hash_offset` | `SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_OFFSET` | uint8 | 0 | Number of bits to rotate the hash output before bucket selection. |
-| `ecmp_hash_algorithm` | `SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_ALGORITHM` | enum | CRC | Algorithm used to compute the hash (CRC, XOR, random, CRC_CCITT, etc.). |
-
-Equivalent `lag_hash_seed` and `lag_hash_offset` fields exist for LAG hashing and follow the same pattern.
-
-### Seed Assignment
-
-The seed is not chosen randomly — it is a **deterministic value derived from the switch's role in the fabric**. At image build time, the Jinja2 template `switch.json.j2` (in `dockers/docker-orchagent/`) maps `DEVICE_METADATA.localhost.type` to a fixed seed:
-
-```jinja2
-{% if "ToRRouter" in DEVICE_METADATA.localhost.type %}
-{% set hash_seed = 0 %}
-{% elif "LeafRouter" in DEVICE_METADATA.localhost.type %}
-{% set hash_seed = 10 %}
-{% elif "SpineRouter" in DEVICE_METADATA.localhost.type %}
-{% set hash_seed = 25 %}
-{% elif "FabricSpineRouter" in DEVICE_METADATA.localhost.type %}
-{% set hash_seed = 40 %}
-{% elif "UpperSpineRouter" in DEVICE_METADATA.localhost.type %}
-{% set hash_seed = 50 %}
-...
-```
-
-The full mapping:
-
-| Device Role | Base Seed |
-|---|---|
-| ToRRouter | 0 |
-| LeafRouter | 10 |
-| SpineRouter | 25 |
-| FabricSpineRouter | 40 |
-| UpperSpineRouter | 50 |
-| LowerRegionalHub | 60 |
-| FabricRegionalHub | 70 |
-| UpperRegionalHub | 80 |
-
-On multi-ASIC platforms, the `namespace_id` is added to the base seed so that each ASIC within the same chassis receives a unique value (`hash_seed_value = hash_seed + namespace_id`).
-
-This role-based scheme guarantees that every tier in the fabric uses a different seed — a ToR, its leaf, and its spine will never produce the same hash for the same packet — without requiring the operator to configure anything manually.
-
-### Offset Assignment
-
-The hash offset is assigned by the same template. Only `LeafRouter` devices receive a non-zero offset (10 for both ECMP and LAG); all other roles default to 0.
-
-### How switchorch Programs These Values
-
-`switchorch` maintains a static map from `SWITCH_TABLE` field names to SAI attributes:
-
-```cpp
-// switchorch.cpp — attribute map (abridged)
-const map<string, sai_switch_attr_t> switch_attribute_map = {
-    {"ecmp_hash_seed",   SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_SEED},
-    {"lag_hash_seed",    SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_SEED},
-    {"ecmp_hash_offset", SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_OFFSET},
-    {"lag_hash_offset",  SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_OFFSET},
-};
-```
-
-When `switchorch` receives a `SWITCH_TABLE` update containing `ecmp_hash_seed`, it parses the value as a uint32 and calls `sai_switch_api->set_switch_attribute()` with `SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_SEED`. The same pattern applies to offset and algorithm.
+The next hops themselves are independent of the group type — the same next-hop object can be referenced by groups of different types. However, some group types require additional attributes on their members. For example, ordered ECMP members carry a `SEQUENCE_ID` for priority, fine-grain ECMP members carry an `INDEX` for bucket position, and protection group members carry a `CONFIGURED_ROLE` (primary or standby). These per-member attributes are covered in each type's [dedicated section](18a_nhg_types.md).
 
 
-## Dynamic Unordered ECMP
+### How SONiC Selects the Group Type
 
-This is the default and most widely used group type. No special configuration is required — every multi-path route in SONiC programs a `DYNAMIC_UNORDERED_ECMP` group unless a more specific type is configured. Two SONiC modules create groups of this type: `routeorch` (implicitly, as part of route programming) and `nhgorch` (explicitly, for controller-managed groups).
+SONiC does not have a single "type selector". Instead, each group type is owned by a **dedicated orchestrator module**, and the module is determined by which DB table the configuration or route originates from. The type is hard-coded within each module — there is no runtime negotiation between them.
+
+| Input Table                                  | Orch Module   | Hard-coded SAI Group Type |
+|----------------------------------------------|---------------|---------------------------|
+| `ROUTE_TABLE` (default path)                 | `routeorch`   | `DYNAMIC_UNORDERED_ECMP` or `DYNAMIC_ORDERED_ECMP` |
+| `NEXTHOP_GROUP_TABLE`                        | `nhgorch`     | `DYNAMIC_UNORDERED_ECMP` (always) |
+| `FG_NHG` / `FG_NHG_PREFIX` / `FG_NHG_MEMBER` | `fgnhgorch`   | `FINE_GRAIN_ECMP` (always) |
+| `CLASS_BASED_NEXT_HOP_GROUP_TABLE`           | `cbfnhgorch`  | `CLASS_BASED` (always) |
+| `P4RT_TABLE`                                 | `WcmpManager` | `ECMP_WITH_MEMBERS` (always) |
+| `L2_NEXTHOP_GROUP_TABLE`                     | `l2nhgorch`   | `BRIDGE_PORT` (always) |
+
+
+## Route Programming (routeorch)
+
+This section covers routes that arrive through `ROUTE_TABLE` in APPL_DB. For most multi-path routes, `routeorch` creates **Dynamic Unordered ECMP** or **Dynamic Ordered ECMP** groups directly. If a route's prefix matches a Fine-Grain ECMP configuration, `routeorch` delegates it to `fgnhgorch` instead (see step 3 below). All three types share the same route-ingestion pipeline.
 
 ### Route Ingestion (fpmsyncd)
 
-FRR computes multi-path routes and pushes them to the Linux kernel via the Forwarding Plane Manager (FPM) protocol. `fpmsyncd` listens for these netlink route messages and translates them into APPL_DB entries:
+FRR computes multi-path routes and sends them to `fpmsyncd` over a direct TCP connection (zebra's FPM socket). `fpmsyncd` parses these route updates and writes them into APPL_DB (for details on this pipeline, see [fpmsyncd — The Bridge to SONiC](16_bgp_container.md#fpmsyncd--the-bridge-to-sonic)):
 
 ```text
 ROUTE_TABLE:10.0.0.0/24
@@ -120,439 +156,157 @@ ROUTE_TABLE:10.0.0.0/24
     ifname:   Ethernet0,Ethernet4,Ethernet8
 ```
 
-### ASIC Programming (routeorch)
+This entry tells SONiC: "to reach the `10.0.0.0/24` subnet, there are three equal-cost paths — via next hop `10.1.1.1` on `Ethernet0`, via `10.1.2.1` on `Ethernet4`, and via `10.1.3.1` on `Ethernet8`." The comma-separated lists are positionally paired: the first next hop goes with the first interface, and so on.
 
-`routeorch` subscribes to `ROUTE_TABLE` in APPL_DB. When a multi-path route arrives, it:
-
-1. Creates a `NextHopGroupKey` from the comma-separated next-hop and interface strings.
-2. Resolves each next hop to a SAI next-hop OID via `neighOrch`.
-3. Creates a SAI next-hop group of type `DYNAMIC_UNORDERED_ECMP` (or `DYNAMIC_ORDERED_ECMP` if the ASIC supports it — see the next section).
-4. Creates a SAI next-hop group member for each path.
-5. Points the route entry at the group OID.
-
-```cpp
-// routeorch.cpp — selecting group type based on ASIC capability
-nhg_attr.value.s32 = m_switchOrch->checkOrderedEcmpEnable()
-    ? SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP
-    : SAI_NEXT_HOP_GROUP_TYPE_ECMP;
-```
-
-The resulting SAI objects for a three-path route:
-
-```c
-// Group — TYPE is the only mandatory create-time attribute
-group.TYPE = SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP
-create_next_hop_group(&group_oid, ...)
-
-// One member per path
-member.NEXT_HOP_GROUP_ID = group_oid       // parent group (mandatory)
-member.NEXT_HOP_ID       = nexthop_oid     // resolved via neighOrch (mandatory)
-member.WEIGHT             = 1              // relative weight (default 1 → equal-cost)
-create_next_hop_group_member(&member_oid, ...)
-
-// Read-only attributes (queryable after creation)
-group.NEXT_HOP_COUNT       → 3            // current member count
-group.NEXT_HOP_MEMBER_LIST → [m1, m2, m3] // member OIDs
-```
-
-Dynamic group types also support optional attributes for advanced scenarios: `ARS_OBJECT_ID` (Adaptive Routing and Switching for flowlet-based rebalancing), `HASH_ALGORITHM` (per-group hash override), and `HIERARCHICAL_NEXTHOP` (whether the group mixes tunnel and IP next hops, default true). Every member type supports an optional `COUNTER_ID` for per-member hit tracking.
-
-### NHG Orch (Explicit Groups)
-
-While `routeorch` creates next-hop groups implicitly as part of route programming (driven by `ROUTE_TABLE`), `nhgorch` manages groups that are **explicitly defined** through `NEXTHOP_GROUP_TABLE` in APPL_DB. This separation allows external applications or controllers to create and manage next-hop groups independently of the routing stack.
-
-`nhgorch` creates `DYNAMIC_UNORDERED_ECMP` groups and manages member creation, updates, and deletion through the SAI bulk API:
-
-```cpp
-// nhgorch.cpp — default NHG type
-nhg_attr.value.s32 = SAI_NEXT_HOP_GROUP_TYPE_ECMP;
-```
-
-Unlike `routeorch`, which recreates a group when its membership changes, `nhgorch` supports `updateWeight()` on individual members, allowing runtime weight adjustments without tearing down and rebuilding the group.
-
-
-## Dynamic Ordered ECMP
-
-Dynamic Ordered ECMP extends the standard unordered model by sorting members according to a priority value. Each member carries a `SEQUENCE_ID` attribute, and the ASIC evaluates members in sequence-ID order rather than treating them as an unordered set. This is useful when the forwarding policy requires deterministic member selection priority — for example, preferring a local next hop over a remote tunnel endpoint.
-
-### Capability Detection
-
-Not all ASICs support this type. At startup, `switchorch` queries the ASIC's supported group types:
-
-```cpp
-// switchorch.cpp — probing ASIC capabilities at startup
-auto status = sai_query_attribute_enum_values_capability(
-    gSwitchId, SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
-    SAI_NEXT_HOP_GROUP_ATTR_TYPE, &values);
-if (status == SAI_STATUS_SUCCESS) {
-    for (size_t i = 0; i < values.count; i++) {
-        if (values.list[i] == SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP) {
-            m_orderedEcmpEnable = true;
-        }
-    }
-}
-```
-
-The result is published to STATE_DB as `SWITCH_CAPABILITY_TABLE|ordered_ecmp_capable`.
-
-### Effect on the Pipeline
-
-When ordered ECMP is supported, `routeorch` creates every multi-path group as `DYNAMIC_ORDERED_ECMP` instead of `DYNAMIC_UNORDERED_ECMP` (see the `checkOrderedEcmpEnable()` call in the [Dynamic Unordered ECMP](#dynamic-unordered-ecmp) section). Each group member then receives a `SEQUENCE_ID` that controls its priority. `vnetorch` also uses this type for VxLAN overlay ECMP groups.
-
-The only structural difference from unordered ECMP is the `SEQUENCE_ID` on each member:
-
-```c
-group.TYPE = SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP
-create_next_hop_group(&group_oid, ...)
-
-// SEQUENCE_ID determines evaluation order (lower = higher priority)
-member.NEXT_HOP_GROUP_ID = group_oid
-member.NEXT_HOP_ID       = local_nh_oid
-member.SEQUENCE_ID        = 1              // preferred path
-member.WEIGHT             = 1
-create_next_hop_group_member(...)
-
-member.NEXT_HOP_GROUP_ID = group_oid
-member.NEXT_HOP_ID       = tunnel_nh_oid
-member.SEQUENCE_ID        = 2              // fallback path
-member.WEIGHT             = 1
-create_next_hop_group_member(...)
-```
-
-
-## Weighted ECMP (W-ECMP)
-
-SONiC supports weighted ECMP end-to-end as a global toggle. The underlying SAI group type is still `DYNAMIC_UNORDERED_ECMP`, but each member's `WEIGHT` attribute is set to a value derived from the BGP link-bandwidth extended community, producing an unequal traffic split.
-
-### Configuration
-
-The feature is controlled by a single boolean in CONFIG_DB:
-
-```text
-BGP_DEVICE_GLOBAL|STATE
-    wcmp_enabled = "true" | "false"   (default "false")
-```
-
-The YANG model (`sonic-bgp-device-global.yang`) defines this leaf:
-
-```yang
-leaf wcmp_enabled {
-    description "Enables/Disables Weighted-Equal Cost-Multipath using BGP link bandwidth";
-    type boolean;
-    default "false";
-}
-```
-
-CLI commands:
-
-```text
-config bgp device-global w-ecmp enabled      # enable W-ECMP
-config bgp device-global w-ecmp disabled     # disable W-ECMP
-show bgp device-global                        # display current state
-```
-
-`show bgp device-global` output when W-ECMP is enabled:
-
-```text
-TSA       W-ECMP
---------  --------
-disabled  enabled
-```
-
-### Control-Plane Pipeline
-
-When `wcmp_enabled` changes in CONFIG_DB, the `bgpcfgd` daemon (`DeviceGlobalCfgMgr` in `managers_device_global.py`) renders an FRR Jinja2 template and pushes it into the running BGP daemon. The template (`bgpd/wcmp/bgpd.wcmp.conf.j2`) toggles a single FRR directive on the outbound route-maps for both address families:
-
-```text
-route-map TO_BGP_PEER_V4 permit 100
-  set extcommunity bandwidth num-multipaths     ← when wcmp_enabled == true
-exit
-route-map TO_BGP_PEER_V6 permit 100
-  set extcommunity bandwidth num-multipaths     ← when wcmp_enabled == true
-exit
-```
-
-`set extcommunity bandwidth num-multipaths` instructs FRR to attach the BGP link-bandwidth extended community to each outgoing route advertisement. The bandwidth value is set proportionally based on the number of equal-cost multipaths the advertising router has toward that prefix. A peer receiving the advertisement uses these bandwidth values to derive per-path weights, producing an unequal traffic split.
-
-### Weight Propagation Through fpmsyncd
-
-The route ingestion pipeline described in [Dynamic Unordered ECMP](#dynamic-unordered-ecmp) carries equal-cost routes without weights. When W-ECMP is active, FRR additionally programs per-next-hop weights into the kernel. `fpmsyncd` extracts these weights alongside the next hops.
-
-> **Kernel weight offset**: The Linux kernel stores next-hop weights as zero-based values (a weight of 0 means "weight 1"). `fpmsyncd` adds 1 when reading from the kernel so the value written to APPL_DB reflects the true weight.
-
-This correction applies both to individual next-hop weights and to nexthop-group messages:
-
-```cpp
-// fpmsyncd/routesync.cpp — extracting per-next-hop weight (individual)
-uint8_t weight = rtnl_route_nh_get_weight(nexthop);
-if (weight == 0)
-{
-    weight = 1;
-}
-
-// fpmsyncd/routesync.cpp — extracting weights from nexthop group messages (NHA_GROUP)
-weight_list += to_string(nha_grp[i].weight + 1);
-```
-
-`fpmsyncd` writes the route into APPL_DB's `ROUTE_TABLE` with a comma-separated `weight` field:
-
-```text
-ROUTE_TABLE:10.0.0.0/24
-    nexthop:  10.1.1.1,10.1.2.1
-    ifname:   Ethernet0,Ethernet4
-    weight:   5,2
-```
+At this point the route exists only in Redis — the ASIC does not yet know about it. `routeorch` picks it up and programs the necessary SAI objects into the ASIC so the hardware can forward matching packets at line rate.
 
 ### ASIC Programming (routeorch)
 
-`routeorch` parses the weight field and constructs a `NextHopGroupKey` that includes per-member weights:
+`routeorch` subscribes to `ROUTE_TABLE` in APPL_DB. When a multi-path route arrives, it builds the forwarding path bottom-up — the next hops and group must exist in the ASIC before the route entry can reference them:
 
-```cpp
-// orchagent/nexthopgroupkey.h — constructor that pairs next hops with weights
-NextHopGroupKey(const std::string &nexthops, const std::string &weights)
-{
-    std::vector<std::string> nhv = tokenize(nexthops, NHG_DELIMITER);
-    std::vector<std::string> wtv = tokenize(weights, NHG_DELIMITER);
-    bool set_weight = wtv.size() == nhv.size();
-    for (uint32_t i = 0; i < nhv.size(); i++)
-    {
-        NextHopKey nh(nhv[i]);
-        nh.weight = set_weight ? (uint32_t)std::stoi(wtv[i]) : 0;
-        m_nexthops.insert(nh);
-    }
-}
-```
+1. **Parse** — builds a `NextHopGroupKey`, a canonical string that uniquely identifies the set of next hops (e.g., `10.1.1.1@Ethernet0,10.1.2.1@Ethernet4,10.1.3.1@Ethernet8`). If a group with this key already exists, `routeorch` reuses it (see [NHG Reuse](#nhg-reuse)).
 
-When creating a next-hop group member, `routeorch` sets `SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT` only when the weight is non-zero. When the weight is omitted (zero), SAI defaults to weight 1, making the behavior identical to standard equal-cost ECMP:
+2. **Resolve next hops** — resolves each next hop to a SAI next-hop OID (Object Identifier) via `neighOrch`. These next-hop objects must already exist (created when the neighbor was learned).
 
-```cpp
-// orchagent/routeorch.cpp — programming weight into SAI
-if (weight)
-{
-    nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT;
-    nhgm_attr.value.s32 = weight;
-    nhgm_attrs.push_back(nhgm_attr);
-}
-```
-
-
-## ECMP With Members (P4RT WCMP)
-
-SONiC exposes weighted ECMP through the P4Runtime interface via the `WcmpManager` (in `orchagent/p4orch/`). Unlike the `routeorch` path, which creates a group and then adds individual member objects one at a time, this type accepts the full member list and weight list as **group-level attributes** in a single bulk SAI call:
-
-```c
-// Everything is specified at group creation — no separate member objects
-group.TYPE                         = SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS
-group.NEXT_HOP_LIST                = [nh_oid_1, nh_oid_2, nh_oid_3]   // ordered next-hop OIDs
-group.NEXT_HOP_MEMBER_WEIGHT_LIST  = [3, 2, 1]                        // per-member weights
-group.NEXT_HOP_MEMBER_COUNTER_LIST = [ctr_1, ctr_2, ctr_3]            // per-member hit counters
-create_next_hop_group(&group_oid, ...)
-```
-
-```cpp
-// orchagent/p4orch/wcmp_manager.cpp — bulk weight programming
-nhl.id   = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
-nhmwl.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
-```
-
-Each P4RT WCMP group member carries a `weight` (default 1) and an optional `watch_port`. When a `watch_port` goes operationally down, the member is **pruned** (temporarily removed from the group) and the remaining members absorb the traffic. When the port comes back up, the member is restored. This pruning is managed by `WcmpManager::updateWatchPort()`.
-
-
-## Fine-Grain ECMP (FG-ECMP)
-
-Fine-Grain ECMP is implemented by `fgnhgorch`. It uses `SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP`, which gives software full control over a fixed-size bucket array with explicit per-bucket member assignment.
-
-### Configuration
-
-FG-ECMP is configured per destination prefix through three CONFIG_DB tables:
-
-| Table | Key | Fields | Purpose |
-|---|---|---|---|
-| `FG_NHG` | Group name | `bucket_size`, `match_mode` | Defines a named FG-ECMP group with its bucket count and matching strategy. |
-| `FG_NHG_PREFIX` | IP prefix | `FG_NHG` (group name) | Binds a destination prefix to an FG-ECMP group. |
-| `FG_NHG_MEMBER` | Next-hop IP | `FG_NHG`, `bank` | Assigns a next hop to a group and a bank for scoped failover. |
-
-Example:
+3. **Select group type** — evaluates a priority chain to determine which module owns the group and what SAI type to use:
 
 ```text
-FG_NHG|group1
-    bucket_size: 60
-
-FG_NHG_PREFIX|10.0.0.0/24
-    FG_NHG: group1
-
-FG_NHG_MEMBER|10.1.1.1
-    FG_NHG: group1
-    bank: 0
-
-FG_NHG_MEMBER|10.1.2.1
-    FG_NHG: group1
-    bank: 0
-
-FG_NHG_MEMBER|10.1.3.1
-    FG_NHG: group1
-    bank: 1
+Route arrives with multiple next hops
+    │
+    ├─ Prefix matches an FG_NHG_PREFIX entry?
+    │      YES → delegates to fgnhgorch → FINE_GRAIN_ECMP
+    │
+    ├─ Route carries a nexthop_group field?
+    │      YES → delegates to the referenced orch (nhgorch or cbfnhgorch)
+    │
+    └─ Default → routeorch creates its own NHG
+           → DYNAMIC_ORDERED_ECMP if ordered_ecmp == true AND ASIC supports it
+           → DYNAMIC_UNORDERED_ECMP otherwise
 ```
 
-### ASIC Programming (fgnhgorch)
+4. **Create NHG** — creates a SAI next-hop group of the selected type.
 
-`fgnhgorch` creates a SAI group with type `FINE_GRAIN_ECMP` and a `CONFIGURED_SIZE` equal to `bucket_size`:
+5. **Add members** — creates a SAI next-hop group member for each path, linking the next-hop OID to the group.
+
+6. **Program route** — creates the route entry in the ASIC's forwarding table (FIB), pointing it at the group OID. From this moment, the ASIC forwards packets matching this prefix through the group.
+
+### NHG Reuse
+
+NHG table entries are a finite ASIC resource. To avoid exhausting them, `routeorch` **reuses** an existing group whenever multiple routes share the same set of next hops.
+
+The `NextHopGroupKey` from step 1 is the lookup key. When a new route arrives, `routeorch` checks its internal map: if a group with that key already exists, it skips steps 3–5 entirely and points the new route entry at the existing group OID. For example:
+
+```text
+ROUTE_TABLE:10.0.0.0/24     nexthop: 10.1.1.1,10.1.2.1    ifname: Ethernet0,Ethernet4
+ROUTE_TABLE:10.0.1.0/24     nexthop: 10.1.1.1,10.1.2.1    ifname: Ethernet0,Ethernet4
+```
+
+Both routes produce the same key (`10.1.1.1@Ethernet0,10.1.2.1@Ethernet4`). The first route creates the group in the ASIC; the second route reuses it:
+
+```text
+NHG (group_oid: 0x5000001)
+  ├─ member → 10.1.1.1 via Ethernet0
+  └─ member → 10.1.2.1 via Ethernet4
+
+Route 10.0.0.0/24 → group_oid 0x5000001
+Route 10.0.1.0/24 → group_oid 0x5000001   ← reuses the same group
+```
+
+`routeorch` maintains a reference count on each group. The group is only deleted from the ASIC when the last route referencing it is removed.
+
+### Member Lifecycle
+
+The section above describes how groups are **created**. This section covers what happens when paths **change** after initial programming — how members are added, removed, or updated at runtime.
+
+#### What Triggers a Change
+
+A membership change starts in the control plane and propagates through the same pipeline used for initial route programming:
+
+1. **Path goes down** — a BGP neighbor fails or a link drops. FRR withdraws the affected next hop and sends an updated route to `fpmsyncd` with fewer next hops.
+2. **Path comes up** — a new BGP neighbor is established or a link recovers. FRR adds the next hop and sends an updated route with more next hops.
+3. **Weight changes** — FRR recalculates link-bandwidth values and sends an updated route with new weights.
+
+In all cases, `fpmsyncd` writes the updated `ROUTE_TABLE` entry to APPL_DB. `routeorch` detects the change and must reconcile the ASIC state.
+
+#### routeorch — Group Recreation
+
+`routeorch` does **not** incrementally add or remove individual members. Instead, when a route's next-hop set changes, it replaces the entire group:
+
+1. Build a new `NextHopGroupKey` from the updated next-hop list.
+2. Check if a group with the new key already exists ([NHG Reuse](#nhg-reuse)) — if so, skip to step 4.
+3. Call `addNextHopGroup()` — creates a new NHG and all its members via the SAI bulk API.
+4. Update the route entry (`sai_route_api->set_route_entry_attribute()`) to point at the new group OID.
+5. Call `decreaseNextHopRefCount()` on the old group. If the reference count reaches zero (no other routes reference it), `removeNextHopGroup()` removes all members (bulk) and deletes the group.
+
+The SAI calls for removing a member and a group:
 
 ```c
-// Group — CONFIGURED_SIZE sets the bucket array length
-group.TYPE            = SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP
-group.CONFIGURED_SIZE = 60                 // requested bucket count
-create_next_hop_group(&group_oid, ...)
-group.REAL_SIZE       → 64                 // actual ASIC allocation (read-only, may round up)
+/* Remove a member from the group */
+sai_next_hop_group_api->remove_next_hop_group_member(member_oid);
 
-// Members — INDEX pins each member to a specific bucket position
-member.NEXT_HOP_GROUP_ID = group_oid
-member.NEXT_HOP_ID       = nexthop_oid
-member.INDEX              = 0              // explicit position in the bucket array
-create_next_hop_group_member(...)
+/* Remove the group itself (only after all members are removed) */
+sai_next_hop_group_api->remove_next_hop_group(group_oid);
 ```
 
-```cpp
-// fgnhgorch.cpp — creating a fine-grain ECMP group
-nhg_attr.value.s32 = SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP;
+Example — a three-path route loses one path (`10.1.3.1` goes down):
+
+```text
+BEFORE (3 paths):
+
+NHG (group_oid_A)
+  ├─ member → 10.1.1.1 via Ethernet0
+  ├─ member → 10.1.2.1 via Ethernet4
+  └─ member → 10.1.3.1 via Ethernet8
+
+Route 10.0.0.0/24 → group_oid_A
+
+FRR withdraws 10.1.3.1 → fpmsyncd updates ROUTE_TABLE with 2 next hops
+
+AFTER (2 paths):
+
+NHG (group_oid_B)
+  ├─ member → 10.1.1.1 via Ethernet0
+  └─ member → 10.1.2.1 via Ethernet4
+
+Route 10.0.0.0/24 → group_oid_B          group_oid_A (deleted)
 ```
 
-When a member fails, `fgnhgorch` rewrites only the buckets belonging to that member and redistributes them to other members **within the same bank**. Members in other banks are untouched.
+`routeorch` steps:
+1. New key: `10.1.1.1@Ethernet0,10.1.2.1@Ethernet4`
+2. No existing group with this key → `addNextHopGroup()` creates group (`group_oid_B`) + 2 members
+3. Route entry updated: `10.0.0.0/24 → group_oid_B`
+4. `decreaseNextHopRefCount()` on old group (`group_oid_A`) → ref count reaches 0
+5. `removeNextHopGroup()` removes 3 members (bulk), then deletes the group
+
+This approach is simple but means every membership change involves creating a new group in the ASIC, even if only one member was added or removed.
 
 
-## Class-Based Forwarding (CBF)
+## NHG Orch (Explicit Groups)
 
-Class-Based Forwarding steers traffic by **forwarding class** rather than hash. It is implemented by `cbfnhgorch` using `SAI_NEXT_HOP_GROUP_TYPE_CLASS_BASED`.
+The sections above describe groups created implicitly by `routeorch` as a side effect of route programming. `nhgorch` takes a fundamentally different approach: it manages groups that are **explicitly defined** through `NEXTHOP_GROUP_TABLE` in APPL_DB, allowing external applications or controllers to create and manage next-hop groups independently of the routing stack.
 
-### Configuration
+`nhgorch` always creates `DYNAMIC_UNORDERED_ECMP` groups (it does not use the ordered ECMP path).
 
-CBF uses two APPL_DB tables:
+### Incremental Member Updates
 
-| Table | Key | Fields | Purpose |
-|---|---|---|---|
-| `CLASS_BASED_NEXT_HOP_GROUP_TABLE` | Group name | `members`, `selection_map` | Defines a CBF group with its member NHGs and the map that selects among them. |
-| `FC_TO_NHG_INDEX_MAP_TABLE` | Map name | `fc → index` pairs | Maps each forwarding-class value to a member index in the group. |
-
-### ASIC Programming (cbfnhgorch)
-
-`cbfnhgorch` creates a SAI group with type `CLASS_BASED` and attaches a `NEXT_HOP_GROUP_MAP`:
+Unlike `routeorch`, which recreates a group when its membership changes, `nhgorch` **diffs** the old and new member sets and applies only the differences — adding new members, removing missing ones, and updating weights on existing ones — without tearing down the group. This is possible because `nhgorch` manages groups explicitly — the group's identity is defined by its name in `NEXTHOP_GROUP_TABLE`, not derived from the member set.
 
 ```c
-// Step 1 — create a forwarding-class → member-index map
-map.TYPE              = SAI_NEXT_HOP_GROUP_MAP_TYPE_FORWARDING_CLASS_TO_INDEX
-map.MAP_TO_VALUE_LIST = { fc=0 → idx=0, fc=1 → idx=0, fc=7 → idx=1 }
-create_next_hop_group_map(&map_oid, ...)
+/* Add a new member to an existing group */
+sai_next_hop_group_api->create_next_hop_group_member(&new_member_oid, switch_id, 3, mbr_attrs);
 
-// Step 2 — create the group with SELECTION_MAP pointing to that map
-group.TYPE            = SAI_NEXT_HOP_GROUP_TYPE_CLASS_BASED
-group.CONFIGURED_SIZE = 2                  // number of member slots
-group.SELECTION_MAP   = map_oid            // forwarding-class → index lookup
-create_next_hop_group(&group_oid, ...)
+/* Remove a member that is no longer needed */
+sai_next_hop_group_api->remove_next_hop_group_member(old_member_oid);
 
-// Step 3 — members positioned by INDEX (can be individual NHs or nested ECMP groups)
-member.NEXT_HOP_GROUP_ID = group_oid
-member.NEXT_HOP_ID       = nhg_or_nh_oid
-member.INDEX              = 0              // receives traffic for fc=0 and fc=1
-create_next_hop_group_member(...)
+/* Update a member's weight without removing it */
+sai_attribute_t weight_attr;
+weight_attr.id        = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT;
+weight_attr.value.u32 = 5;
+sai_next_hop_group_api->set_next_hop_group_member_attribute(member_oid, &weight_attr);
 ```
 
-```cpp
-// cbf/cbfnhgorch.cpp — creating a class-based group
-nhg_attr.value.u32 = SAI_NEXT_HOP_GROUP_TYPE_CLASS_BASED;
-```
-
-If a packet arrives with a forwarding class not present in the map, index 0 is selected by default. Members of a CBF group can be individual next hops or nested ECMP groups, enabling hierarchical forwarding policies.
-
-
-## Protection Groups
-
-Protection groups provide **primary/standby failover** for next hops. SAI defines two variants — one with software-controlled switchover and one with hardware-controlled switchover. Neither is currently consumed by a dedicated SONiC orchagent module; they are available for vendor-specific or platform-specific implementations that program SAI directly.
-
-### Software Protection
-
-A group of type `SAI_NEXT_HOP_GROUP_TYPE_PROTECTION` contains exactly two members: one with `CONFIGURED_ROLE` set to `PRIMARY` and one set to `STANDBY`. Under normal operation, all traffic is forwarded through the primary member. The standby member is pre-programmed in the ASIC but receives no traffic.
-
-```c
-// Group creation
-group.TYPE = SAI_NEXT_HOP_GROUP_TYPE_PROTECTION
-create_next_hop_group(&group_oid, ...)
-
-// Primary member
-primary.NEXT_HOP_GROUP_ID = group_oid
-primary.NEXT_HOP_ID       = primary_nh_oid
-primary.CONFIGURED_ROLE    = PRIMARY
-primary.MONITORED_OBJECT   = bfd_session_oid   // optional — drives failover decisions
-create_next_hop_group_member(&primary_oid, ...)
-
-// Standby member
-standby.NEXT_HOP_GROUP_ID = group_oid
-standby.NEXT_HOP_ID       = standby_nh_oid
-standby.CONFIGURED_ROLE    = STANDBY
-create_next_hop_group_member(&standby_oid, ...)
-
-// Software-triggered failover
-set_attribute(group_oid, SET_SWITCHOVER, true)
-
-// Read-only observed state after switchover
-primary.OBSERVED_ROLE → INACTIVE           // was active, now on standby
-standby.OBSERVED_ROLE → ACTIVE             // now carrying traffic
-```
-
-When the control plane detects that the primary path has failed (for example, via a BFD session going down), it sets `SET_SWITCHOVER` to `true`, causing the ASIC to redirect all traffic to the standby member. Each member can optionally reference a `MONITORED_OBJECT` (such as a BFD session OID) whose state the control plane uses to drive the switchover decision.
-
-### Hardware Protection
-
-A group of type `SAI_NEXT_HOP_GROUP_TYPE_HW_PROTECTION` follows the same primary/standby model, but the ASIC manages failover autonomously — typically driven by hardware-level link-state or BFD offload, without requiring a software trigger.
-
-The key difference from software protection is the admin-role override. Each member supports an `ADMIN_ROLE` attribute with three modes:
-
-| Admin Role | Behavior |
-|---|---|
-| `AUTO` | Hardware decides which member is active based on monitored-object state (default). |
-| `PRIMARY` | Force this member to the active role regardless of monitored state. |
-| `STANDBY` | Force this member to standby regardless of monitored state. |
-
-This allows operators to perform maintenance drains or manual traffic steering while retaining automatic failover as the default behavior.
-
-
-## Bridge Port (L2 Next-Hop Groups)
-
-`l2nhgorch` manages Layer 2 next-hop groups using `SAI_NEXT_HOP_GROUP_TYPE_BRIDGE_PORT`:
-
-```c
-// Group creation
-group.TYPE = SAI_NEXT_HOP_GROUP_TYPE_BRIDGE_PORT
-create_next_hop_group(&group_oid, ...)
-
-// Members reference bridge-port OIDs instead of IP next-hop OIDs
-member.NEXT_HOP_GROUP_ID = group_oid
-member.NEXT_HOP_ID       = bridge_port_oid
-create_next_hop_group_member(...)
-```
-
-```cpp
-// l2nhgorch.cpp — L2 bridge-port group
-nhg_attr.value.s32 = SAI_NEXT_HOP_GROUP_TYPE_BRIDGE_PORT;
-```
-
-These groups provide L2 ECMP across bridge ports rather than IP next hops. Where an IP ECMP group selects among routed next-hop OIDs, a bridge-port group selects among bridge-port OIDs, distributing traffic across multiple L2 paths within a VLAN or bridge domain.
-
-
-## Summary: SONiC ECMP Variant Coverage
-
-| ECMP Variant | SONiC Module | SAI Group Type | CONFIG_DB / APPL_DB Tables | Key Capability |
-|---|---|---|---|---|
-| Standard ECMP | `routeorch` | `DYNAMIC_UNORDERED_ECMP` | `ROUTE_TABLE` (APPL_DB) | Default multi-path forwarding |
-| Ordered ECMP | `routeorch`, `vnetorch` | `DYNAMIC_ORDERED_ECMP` | `ROUTE_TABLE` (APPL_DB) | Priority-based member ordering via `SEQUENCE_ID` |
-| Weighted ECMP | `routeorch` | `DYNAMIC_UNORDERED_ECMP` + weight | `BGP_DEVICE_GLOBAL` (CONFIG_DB), `ROUTE_TABLE` (APPL_DB) | Per-member weight via BGP link-bandwidth |
-| NHG (explicit groups) | `nhgorch` | `DYNAMIC_UNORDERED_ECMP` | `NEXTHOP_GROUP_TABLE` (APPL_DB) | Explicitly managed groups with runtime weight updates |
-| WCMP (P4RT) | `WcmpManager` | `ECMP_WITH_MEMBERS` | `P4RT_TABLE` (APPL_DB) | Bulk member+weight programming, watch-port pruning |
-| Fine-Grained ECMP | `fgnhgorch` | `FINE_GRAIN_ECMP` | `FG_NHG`, `FG_NHG_PREFIX`, `FG_NHG_MEMBER` (CONFIG_DB) | Bank-scoped failover, fixed bucket array |
-| Class-Based Forwarding | `cbfnhgorch` | `CLASS_BASED` | `CLASS_BASED_NEXT_HOP_GROUP_TABLE`, `FC_TO_NHG_INDEX_MAP_TABLE` (APPL_DB) | Forwarding-class steering |
-| Software Protection | — | `PROTECTION` | — | Primary/standby failover, software-triggered switchover |
-| Hardware Protection | — | `HW_PROTECTION` | — | Primary/standby failover, hardware-autonomous switchover |
-| L2 ECMP | `l2nhgorch` | `BRIDGE_PORT` | `L2_NEXTHOP_GROUP_TABLE` (APPL_DB) | L2 bridge-port load balancing |
+This is more efficient for frequent updates but requires tracking individual member OIDs, which `nhgorch` maintains in its internal data structures.
 
 ---
 
-**Previous**: [← The Route-Download Benchmark](17_benchmark.md) · **Next**: [The PMON Container →](19_pmon_container.md)
+**Previous**: [← The Route-Download Benchmark](17_benchmark.md) · **Next**: [SAI Next-Hop Group Types →](18a_nhg_types.md)

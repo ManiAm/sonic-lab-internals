@@ -500,4 +500,4 @@ On container stop, each daemon receives `SIGTERM`, cleans up its STATE_DB entrie
 
 ---
 
-**Previous**: [← Load Balancing](18_load_balancing.md) · **Next**: [Platform Configuration →](20_platform_configuration.md)
+**Previous**: [← SAI Next-Hop Group Types](18a_nhg_types.md) · **Next**: [Platform Configuration →](20_platform_configuration.md)

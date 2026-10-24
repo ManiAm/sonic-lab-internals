@@ -335,27 +335,6 @@ Five objects are created in this order:
 
 - **Route entry** (⑤) — the entry key (`10.99.0.0/24`). Its `NEXT_HOP_ID` attribute points at the group (`oid: 5`), completing the chain.
 
-The code for steps ①–③ (creating one next hop, the group, and one member):
-
-```c
-/* 1. Create the next hop — must exist before anything references it */
-sai_next_hop_api->create_next_hop(&nh_oid, switch_id, 3, nh_attrs);
-
-/* 2. Create the next-hop group (the parent) */
-sai_attribute_t group_attr;
-group_attr.id        = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
-group_attr.value.s32 = SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP;
-sai_next_hop_group_api->create_next_hop_group(&group_oid, switch_id, 1, &group_attr);
-
-/* 3. Create the member (join object — references both the group and the next hop) */
-sai_attribute_t member_attrs[2];
-member_attrs[0].id        = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID;
-member_attrs[0].value.oid = group_oid;       /* points at the parent */
-member_attrs[1].id        = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
-member_attrs[1].value.oid = nh_oid;          /* points at the next hop */
-sai_next_hop_group_api->create_next_hop_group_member(&member_oid, switch_id, 2, member_attrs);
-```
-
 The same parent-and-member pattern appears across SAI:
 
 | Parent | Child | What the child attaches |
