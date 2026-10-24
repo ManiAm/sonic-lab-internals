@@ -143,7 +143,7 @@ Without STATE_DB, `vlanmgrd` might try to configure a VLAN on a port that does n
 
 **Purpose**: Stores counters and statistics collected from the hardware. This is the primary source of operational telemetry data.
 
-**Who writes**: `syncd`, through the **FlexCounter** mechanism. FlexCounter is a configurable polling system — it defines which hardware counters to read and how often. Syncd uses FlexCounter to periodically poll the ASIC for counter values and write them to COUNTERS_DB.
+**Who writes**: `syncd`, through the **FlexCounter** mechanism — a configurable polling system that defines which hardware counters to read and how often. Syncd uses FlexCounter to periodically poll the ASIC for counter values and write them to COUNTERS_DB. See [Flex Counters](15_flex_counters.md) for the full architecture.
 
 **Who reads**: The CLI (`show interfaces counters`), the telemetry container (for streaming to external collectors), and SNMP.
 

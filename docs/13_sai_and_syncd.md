@@ -175,7 +175,7 @@ The syncd container has two primary responsibilities:
 
 ### Processing Loop
 
-Syncd's main loop (`Syncd::run()`) blocks on a `select()` waiting for events from multiple sources: the ASIC_DB channel, a restart query, and flex counter tables. When a new ASIC_DB entry arrives, syncd drains all pending entries in a loop:
+Syncd's main loop (`Syncd::run()`) blocks on a `select()` waiting for events from multiple sources: the ASIC_DB channel, a restart query, and [flex counter](15_flex_counters.md) tables. When a new ASIC_DB entry arrives, syncd drains all pending entries in a loop:
 
 1. Pops the message (key, operation, fields) from the `ConsumerTable`.
 2. Parses the key to extract the SAI object type and deserializes the attributes.

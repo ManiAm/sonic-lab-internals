@@ -463,7 +463,7 @@ uint64_t values[2];
 port_api->get_port_stats(port_oid, 2, counters, values);
 ```
 
-Syncd's flex counter infrastructure polls these counters on its own thread and writes the values to COUNTERS_DB, keeping that polling off orchagent's main loop. Which counters to poll and how often is configured in FLEX_COUNTER_DB. Both databases are described in [Core Redis Databases](08_redis_databases.md#counters_db) and [The Database Container](07_database_container.md).
+Syncd's flex counter infrastructure polls these counters on its own thread and writes the values to COUNTERS_DB, keeping that polling off orchagent's main loop. [Flex Counters](15_flex_counters.md) covers the full mechanism: counter groups, polling configuration, and how results reach COUNTERS_DB.
 
 
 ## Notifications
