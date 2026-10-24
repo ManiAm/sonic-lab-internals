@@ -1,17 +1,17 @@
 # The BGP Route-Download Benchmark
 
-> **Prerequisite**: [The BGP Container and FRR](15_bgp_container.md) — understand the route journey from BGP peer to ASIC. The pipeline stages referenced in this document (bgpd, zebra, fpmsyncd, orchagent, syncd) are explained in docs [11](11_swss_container.md)–[15](15_bgp_container.md).
+> **Prerequisite**: [The BGP Container and FRR](16_bgp_container.md) — understand the route journey from BGP peer to ASIC. The pipeline stages referenced in this document (bgpd, zebra, fpmsyncd, orchagent, syncd) are explained in docs [11](11_swss_container.md)–[16](16_bgp_container.md).
 
 > All measurements in this document come from a [Celestica Seastone DX010](https://github.com/ManiAm/net-lab-dx010) (Broadcom ASIC) running SONiC 202405 with default settings unless noted otherwise.
 
 
 ## The Route Pipeline — From BGP Peer to ASIC
 
-When a SONiC switch learns a route from a BGP peer, that route does not go straight into hardware. It walks through a long pipeline of processes and databases before it is finally programmed into the ASIC. The full journey is documented in [The BGP Container — The Route's Journey Through SONiC](15_bgp_container.md#the-routes-journey-through-sonic). For quick reference, here is the compact path:
+When a SONiC switch learns a route from a BGP peer, that route does not go straight into hardware. It walks through a long pipeline of processes and databases before it is finally programmed into the ASIC. The full journey is documented in [The BGP Container — The Route's Journey Through SONiC](16_bgp_container.md#the-routes-journey-through-sonic). For quick reference, here is the compact path:
 
 <img src="../pics/opt-path.png" alt="segment" width="1000">
 
-Each stage is covered in an earlier doc: [bgpd, zebra, and fpmsyncd](15_bgp_container.md) handle protocol processing and route selection; [orchagent](12_orchagent.md) translates route intent into SAI hardware operations; [syncd and the vendor SAI](13_sai_and_syncd.md) execute those operations against the ASIC; the intermediate databases (APPL_DB, ASIC_DB) are covered in [Core Redis Databases](08_redis_databases.md).
+Each stage is covered in an earlier doc: [bgpd, zebra, and fpmsyncd](16_bgp_container.md) handle protocol processing and route selection; [orchagent](12_orchagent.md) translates route intent into SAI hardware operations; [syncd and the vendor SAI](13_sai_and_syncd.md) execute those operations against the ASIC; the intermediate databases (APPL_DB, ASIC_DB) are covered in [Core Redis Databases](08_redis_databases.md).
 
 This separation keeps protocol logic independent of any specific hardware, makes the system inspectable at every stage, and lets SONiC run on ASICs from different vendors without changing the layers above SAI. The trade-off is that every hop between layers adds serialization, queueing, and context-switch overhead. When a switch suddenly receives thousands of routes — after a reboot or a peering flap — that cumulative overhead determines how long traffic is forwarded on incomplete information.
 
@@ -363,4 +363,4 @@ For a detailed explanation of both modes, including the error-handling behavior,
 
 ---
 
-**Previous**: [← The BGP Container and FRR](15_bgp_container.md) · **Next**: [Load Balancing →](17_load_balancing.md)
+**Previous**: [← The BGP Container and FRR](16_bgp_container.md) · **Next**: [Load Balancing →](18_load_balancing.md)

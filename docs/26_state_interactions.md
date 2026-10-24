@@ -325,4 +325,4 @@ redis-cli -n 1 keys '*ROUTE*10.1.0.0*'
 
 ---
 
-**Previous**: [← Warm Reboot Deep Dive](24_warm_reboot.md) · **Next**: [Logging →](26_logging.md)
+**Previous**: [← Warm Reboot Deep Dive](25_warm_reboot.md) · **Next**: [Logging →](27_logging.md)

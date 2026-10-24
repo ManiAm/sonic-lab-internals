@@ -1,6 +1,6 @@
 # Load Balancing in SONiC
 
-> **Prerequisites**: [SAI Object Model](14_sai_object_model.md) — understand SAI object types, attribute semantics, and the group+member pattern. [BGP Container](15_bgp_container.md) — understand the FRR integration and `bgpcfgd`.
+> **Prerequisites**: [SAI Object Model](14_sai_object_model.md) — understand SAI object types, attribute semantics, and the group+member pattern. [BGP Container](16_bgp_container.md) — understand the FRR integration and `bgpcfgd`.
 
 For a comprehensive treatment of data center fabric load balancing — ECMP fundamentals, hash polarization, adaptive routing, and RDMA-specific constraints — see [DC-Load-Balancing](https://github.com/ManiAm/DC-Load-Balancing). This document focuses on how SONiC implements ECMP-based load balancing end-to-end: which SAI object types the ASIC exposes, which orchagent modules consume them, and how the control-plane pipeline (FRR → kernel → fpmsyncd → APPL_DB → orchagent → SAI) carries routes and weights into hardware.
 
@@ -555,4 +555,4 @@ These groups provide L2 ECMP across bridge ports rather than IP next hops. Where
 
 ---
 
-**Previous**: [← The Route-Download Benchmark](16_benchmark.md) · **Next**: [The PMON Container →](18_pmon_container.md)
+**Previous**: [← The Route-Download Benchmark](17_benchmark.md) · **Next**: [The PMON Container →](19_pmon_container.md)

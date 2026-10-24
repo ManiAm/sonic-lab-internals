@@ -447,11 +447,11 @@ The same bulk pattern exists for remove and set, and for other types (neighbors,
 
 Attributes describe how an object is configured. **Stats** (statistics) count what the object has done — bytes transmitted, packets dropped, and so on. Stats are not part of the create or set calls; they are read separately. Each type that supports counters has a `sai_*_stat_t` enum and three functions on its method table:
 
-| Function | What it does |
-|---|---|
-| `get_*_stats` | Reads the selected counters. |
+| Function          | What it does |
+|-------------------|--------------|
+| `get_*_stats`     | Reads the selected counters. |
 | `get_*_stats_ext` | Reads them, and can clear them in the same call. The mode is `SAI_STATS_MODE_READ` or `SAI_STATS_MODE_READ_AND_CLEAR`. |
-| `clear_*_stats` | Sets the selected counters back to zero. |
+| `clear_*_stats`   | Sets the selected counters back to zero. |
 
 ```c
 sai_stat_id_t counters[] = {
@@ -480,19 +480,19 @@ sai_switch_api->set_switch_attribute(switch_oid, &attr);
 
 The vendor SAI invokes that callback on its own thread whenever the event occurs. In SONiC, the callback runs inside syncd, which publishes the event on an ASIC_DB notification channel. Orchagent then handles it on the notification thread described in [The Notification Thread](12_orchagent.md#the-notification-thread).
 
-| Notification | What changed |
-|---|---|
-| Port state change | A port's link (operational status) went up or down. |
-| FDB event | A MAC address was learned, aged, or flushed. |
-| Port host Tx ready | The port's host interface is ready to transmit. |
-| Queue PFC deadlock | Priority-flow-control (PFC) deadlock was detected on a queue. |
-| BFD session state | A Bidirectional Forwarding Detection (BFD) session came up or went down. |
+| Notification            | What changed                 |
+|-------------------------|------------------------------|
+| Port state change       | A port's link (operational status) went up or down. |
+| FDB event               | A MAC address was learned, aged, or flushed. |
+| Port host Tx ready      | The port's host interface is ready to transmit. |
+| Queue PFC deadlock      | Priority-flow-control (PFC) deadlock was detected on a queue. |
+| BFD session state       | A Bidirectional Forwarding Detection (BFD) session came up or went down. |
 | Switch shutdown request | The ASIC requested a controlled shutdown — for example, due to a thermal emergency. |
 
 
 ## Reading an Implementation
 
-The SAI repository publishes only header files, not ASIC implementations. [SAI Headers vs. Vendor Implementations](13_sai_and_syncd.md#sai-headers-vs-vendor-implementations) covers that split. Here is where you can read actual implementation code:
+The SAI repository publishes only header files, not ASIC implementations. Here is where you can read actual implementation code:
 
 **NVIDIA Spectrum.** [SAI-Implementation](https://github.com/Mellanox/SAI-Implementation) is a `libsai` for Spectrum ASICs, written against the SX SDK. Its README tracks SAI 1.10 headers, an older generation than the one current SONiC builds use. The kernel drivers are in [Spectrum-SDK-Drivers](https://github.com/Mellanox/Spectrum-SDK-Drivers).
 
@@ -502,4 +502,4 @@ The SAI repository publishes only header files, not ASIC implementations. [SAI H
 
 ---
 
-**Previous**: [← SAI and Syncd](13_sai_and_syncd.md) · **Next**: [The BGP Container and FRR →](15_bgp_container.md)
+**Previous**: [← SAI and Syncd](13_sai_and_syncd.md) · **Next**: [Flex Counters →](15_flex_counters.md)
