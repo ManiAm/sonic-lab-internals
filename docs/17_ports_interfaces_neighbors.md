@@ -14,7 +14,7 @@ A **neighbor entry** records the MAC address of a device one hop away, learned t
 
 A **next hop** is the forwarding target that route entries point to. It combines a neighbor's IP address with the RIF it is reachable through, giving the ASIC everything it needs to forward and rewrite in a single lookup. `NeighOrch` creates a next hop alongside every neighbor entry.
 
-A **route entry** ties it all together: it maps a destination prefix (e.g., `10.20.0.0/24`) to a next-hop object, telling the ASIC "packets matching this prefix should be forwarded through this next hop." When a route has **multiple equal-cost paths**, the route entry points to a next-hop group instead of a single next hop — that is covered in [Load Balancing](20_load_balancing.md) and [SAI Next-Hop Group Types](21_nhg_types.md).
+A **route entry** ties it all together: it maps a destination prefix (e.g., `10.20.0.0/24`) to a next-hop object, telling the ASIC "packets matching this prefix should be forwarded through this next hop." When a route has **multiple equal-cost paths**, the route entry points to a next-hop group instead of a single next hop — that is covered in [Load Balancing](20_load_balancing.md).
 
 Each object must exist before the objects above it can be created. This bottom-up dependency is enforced by the [`m_orchList`](12_orchagent.md#the-main-select-loop) ordering — each module runs only after the modules it depends on:
 
@@ -189,6 +189,101 @@ sai_router_intfc_api->create_router_interface(&rif_oid, switch_id, 4, rif_attrs)
 ```
 
 The `SRC_MAC_ADDRESS` attribute is important: when the ASIC routes a packet out through this RIF, it rewrites the packet's source MAC to this value (and the destination MAC to the next hop's MAC, learned via ARP/NDP). This is the standard IP routing behavior — each hop rewrites the L2 header while preserving the L3 header.
+
+### Where the Source MAC Comes From
+
+Every Ethernet frame carries a 48-bit (6-byte) source and destination MAC address. To guarantee that every network interface in the world has a globally unique address, the IEEE splits the 48 bits into two halves:
+
+- **First 3 bytes** — the **OUI** (Organizationally Unique Identifier). Any vendor that builds Ethernet devices must register with the IEEE, which assigns them one or more OUIs (e.g., Arista, Mellanox, and Broadcom each have their own).
+
+- **Last 3 bytes** — a device identifier, assigned by the manufacturer to each unit during production, ensuring no two interfaces share the same address.
+
+<img src="../pics/MAC.png" alt="MAC address structure" width="400">
+
+The manufacturer programs a **base MAC address** and a **MAC range** into the switch's system EEPROM at the factory — before the switch ever runs an operating system. You can inspect both with `show platform syseeprom`:
+
+```
+admin@sonic:~$ show platform syseeprom
+
+TLV Name             Code      Len  Value
+-------------------  ------  -----  ----------------------
+Product Name         0x21        5  DX010
+Base MAC Address     0x24        6  0C:48:C6:80:4D:1A
+MAC Addresses        0x2A        2  131
+Manufacturer         0x2B        9  CELESTICA
+...
+```
+
+This Celestica DX010 has a base MAC of `0C:48:C6:80:4D:1A` with a range of 131 addresses.
+
+### Factory MAC vs Active MAC
+
+Linux network interfaces can have **two** MAC addresses:
+
+| Field | What it is | Mutable? |
+|---|---|---|
+| **`permaddr`** (permanent address) | A unique per-port MAC allocated from the EEPROM range at the factory | No — read-only, burned into hardware |
+| **`link/ether`** (active address) | The MAC currently in use on the wire | Yes — software can override it |
+
+On some platforms and drivers, `ip -d link show` displays both (e.g., `link/ether ... permaddr ...`). On SONiC, the Ethernet netdevs are **hostif interfaces** created by SAI — not traditional NIC interfaces — so `permaddr` is not always separately exposed. What you can always verify is the active MAC:
+
+```
+admin@sonic:~$ ip -d link show Ethernet8
+
+26: Ethernet8: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 9100 ...
+    link/ether 0c:48:c6:80:4d:1a brd ff:ff:ff:ff:ff:ff ...
+```
+
+Every port on the switch uses the same active MAC — the base MAC from the EEPROM:
+
+```
+admin@sonic:~$ for port in Ethernet0 Ethernet4 Ethernet8 Ethernet12 Ethernet120 Ethernet124; do
+>   echo "$port: $(cat /sys/class/net/$port/address)"
+> done
+
+Ethernet0: 0c:48:c6:80:4d:1a
+Ethernet4: 0c:48:c6:80:4d:1a
+Ethernet8: 0c:48:c6:80:4d:1a
+Ethernet12: 0c:48:c6:80:4d:1a
+Ethernet120: 0c:48:c6:80:4d:1a
+Ethernet124: 0c:48:c6:80:4d:1a
+```
+
+All identical — `0c:48:c6:80:4d:1a`. This is the MAC that gets programmed as `SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS` on every RIF. The EEPROM's MAC range provides additional addresses for other uses (management port, CPU port), but SONiC does not allocate unique MACs per front-panel port.
+
+### How SONiC Programs the Source MAC
+
+The base MAC flows from hardware to every RIF through a chain where each level inherits from the one above by default:
+
+```
+System EEPROM (factory-programmed)
+    │  read at first boot by sonic-cfggen
+    ▼
+DEVICE_METADATA|localhost.mac           (CONFIG_DB)
+    │  read by SwitchOrch at startup
+    ▼
+SAI_SWITCH_ATTR_SRC_MAC_ADDRESS
+    │  inherited by default
+    ▼
+SAI_VIRTUAL_ROUTER_ATTR_SRC_MAC_ADDRESS
+    │  inherited by default
+    ▼
+SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS
+```
+
+You can verify the CONFIG_DB end of this chain:
+
+```
+admin@sonic:~$ sonic-cfggen -d -v 'DEVICE_METADATA["localhost"]["mac"]'
+
+0c:48:c6:80:4d:1a
+```
+
+This matches the EEPROM — confirming the full path from hardware to software.
+
+Unless explicitly overridden at any level, **every RIF on the switch shares the same source MAC**. This is standard for IP routing: each hop is identified by its IP address, not its MAC, so a single shared MAC is sufficient.
+
+> [`syseepromd`](22_pmon_container.md#syseepromd--system-eeprom-daemon) also reads the EEPROM at boot and publishes the base MAC and other TLV fields (serial number, platform name, vendor) to the `EEPROM_INFO` table in STATE_DB — this path is for monitoring and CLI display (`show platform syseeprom`), not for programming the ASIC. For how `DEVICE_METADATA` is populated during first boot, see [Platform Configuration](23_platform_configuration.md).
 
 
 ## Neighbors and Next Hops (NeighOrch)
