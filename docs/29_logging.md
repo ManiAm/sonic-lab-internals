@@ -686,6 +686,6 @@ ls -lh /var/log/swss/*.rec
 dmesg | grep -i "oom\|killed process"
 ```
 
-For general debugging commands (Redis inspection, container health, interface diagnosis), see [Troubleshooting](28_troubleshooting.md).
+For general debugging commands (Redis inspection, container health, interface diagnosis), see [Troubleshooting](30_troubleshooting.md).
 
-**Previous**: [← State Interactions](26_state_interactions.md) · **Next**: [Troubleshooting →](28_troubleshooting.md)
+**Previous**: [← State Interactions](28_state_interactions.md) · **Next**: [Troubleshooting →](30_troubleshooting.md)

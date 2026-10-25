@@ -64,7 +64,7 @@ The common counter groups are:
 
 Operators can change these intervals through CONFIG_DB. The watermark and buffer drop groups default to longer intervals because the underlying counters change less frequently and their SAI calls can be more expensive on some platforms.
 
-For the complete list of SAI stat IDs polled by each group, see [Flex Counter Groups — SAI Stat Reference](15a_flex_counter_groups_reference.md).
+For the complete list of SAI stat IDs polled by each group, see [Flex Counter Groups — SAI Stat Reference](16_flex_counter_groups_reference.md).
 
 
 ## Architecture
@@ -336,4 +336,4 @@ Here is the full lifecycle of a port counter, from operator configuration to CLI
 
 ---
 
-**Previous**: [← The SAI Object Model](14_sai_object_model.md) · **Next**: [The BGP Container and FRR →](16_bgp_container.md)
+**Previous**: [← The SAI Object Model](14_sai_object_model.md) · **Next**: [Flex Counter Groups Reference →](16_flex_counter_groups_reference.md)

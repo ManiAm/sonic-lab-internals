@@ -222,4 +222,4 @@ SONiC cannot use the standard off-the-shelf FRR because it needs custom integrat
 
 ---
 
-**Previous**: [← Flex Counters](15_flex_counters.md) · **Next**: [The BGP Route-Download Benchmark →](17_benchmark.md)
+**Previous**: [← Flex Counter Groups Reference](16_flex_counter_groups_reference.md) · **Next**: [The BGP Route-Download Benchmark →](18_benchmark.md)

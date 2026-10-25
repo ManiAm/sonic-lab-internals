@@ -11,33 +11,72 @@ A beginner-friendly, step-by-step guide to understanding SONiC (Software for Ope
 
 Read in order — each document builds on the concepts from the previous ones.
 
+### Foundations
+
 | #  | Topic | Description |
 |----|-------|-------------|
 | 01 | [What is SONiC?](docs/01_what_is_sonic.md) | Switches and ASICs, disaggregation, SAI, containers, why Debian, and other open network operating systems |
 | 02 | [Architecture Overview](docs/02_architecture_overview.md) | System layers, control plane vs data plane, container categories, and the programming pipeline |
+
+### Container Lifecycle
+
+| #  | Topic | Description |
+|----|-------|-------------|
 | 03 | [SONiC Container Architecture](docs/03_sonic_container.md) | What containers are, why SONiC uses them, and the trade-offs |
 | 04 | [Container Build Time](docs/04_container_build_time.md) | Dockerfile templates, the image hierarchy, and build outputs |
 | 05 | [Container Run Time](docs/05_container_run_time.md) | How systemd and host scripts start and control containers; the FEATURE table |
 | 06 | [Inside a Running Container](docs/06_inside_a_running_container.md) | Entrypoint scripts, supervisord, logging, and health monitoring |
+
+### Database & Communication
+
+| #  | Topic | Description |
+|----|-------|-------------|
 | 07 | [The Database Container](docs/07_database_container.md) | Redis instances, multi-DB mode, Unix sockets, persistence |
 | 08 | [Core Redis Databases](docs/08_redis_databases.md) | CONFIG_DB, APPL_DB, ASIC_DB, STATE_DB — what each stores and who uses it |
 | 09 | [Container Communication](docs/09_container_communication.md) | How containers talk to each other and to the host |
 | 10 | [IPC Mechanisms](docs/10_ipc_mechanisms.md) | The five messaging patterns daemons use to stay in sync |
+
+### SWSS, Orchagent & SAI
+
+| #  | Topic | Description |
+|----|-------|-------------|
 | 11 | [The SWSS Container](docs/11_swss_container.md) | Manager daemons, sync daemons, and orchagent overview |
 | 12 | [Orchagent Deep Dive](docs/12_orchagent.md) | Orch architecture, task queues, SAI interaction, sync vs async mode |
 | 13 | [SAI and Syncd](docs/13_sai_and_syncd.md) | Switch Abstraction Interface, meta layer, syncd processing, VID/RID |
 | 14 | [The SAI Object Model](docs/14_sai_object_model.md) | Object identification, attribute semantics, the group+member pattern, capability queries, bulk operations, stats, and notifications |
 | 15 | [Flex Counters](docs/15_flex_counters.md) | FlexCounterOrch, FLEX_COUNTER_DB, syncd polling, counter groups, and COUNTERS_DB |
-| 16 | [The BGP Container and FRR](docs/16_bgp_container.md) | FRRouting, zebra, fpmsyncd, route programming, RIB/FIB mapping, unified/split mode |
-| 17 | [The BGP Route-Download Benchmark](docs/17_benchmark.md) | Measuring route programming rate end-to-end, pipeline stages, tooling, and measured results |
-| 18 | [Load Balancing](docs/18_load_balancing.md) | ECMP in SONiC — SAI next-hop group types, routeorch, weighted ECMP (WCMP), fine-grained ECMP, class-based forwarding, and the full weight pipeline |
-| 19 | [The PMON Container](docs/19_pmon_container.md) | Platform Monitor — Platform API, vendor plugins, xcvrd, psud, thermalctld, ledd, and hardware monitoring |
-| 20 | [Platform Configuration](docs/20_platform_configuration.md) | The device/ hierarchy, ONIE platform strings, HwSKU folders, port_config.ini, platform.json, and how platform files seed CONFIG_DB |
-| 21 | [Host Services](docs/21_host_services.md) | System health monitoring (healthd), monit, watchdog control, and other host-level systemd services |
-| 22 | [Configuration Management](docs/22_configuration_management.md) | config_db.json, CLI, YANG validation, save, load, patch, replace, and reload |
-| 23 | [Config Reload](docs/23_config_reload.md) | CONFIG_DB flush and reload, service stop/start order, delayed service start, config reload vs alternatives |
-| 24 | [Reboot Types](docs/24_reboot_types.md) | Cold, soft, fast, warm, and express reboot comparison |
-| 25 | [Warm Reboot Deep Dive](docs/25_warm_reboot.md) | Pre-shutdown state saving, kexec kernel transition, reconciliation, warmboot-finalizer, container-level warm restart |
-| 26 | [State Interactions](docs/26_state_interactions.md) | End-to-end data flows for routing, port events, VLAN, ARP |
-| 27 | [Logging](docs/27_logging.md) | Syslog, rsyslog routing, SWSS logging macros, SAI recording, log rotation, runtime tuning, techsupport, core dumps |
-| 28 | [Troubleshooting](docs/28_troubleshooting.md) | Debugging techniques for common SONiC problems |
+| 16 | [Flex Counter Groups Reference](docs/16_flex_counter_groups_reference.md) | Every SAI stat ID polled by each counter group — ports, queues, PGs, buffers, LAGs, tunnels, ACLs, and MACsec |
+
+### Routing & Forwarding
+
+| #  | Topic | Description |
+|----|-------|-------------|
+| 17 | [The BGP Container and FRR](docs/17_bgp_container.md) | FRRouting, zebra, fpmsyncd, route programming, RIB/FIB mapping, unified/split mode |
+| 18 | [The BGP Route-Download Benchmark](docs/18_benchmark.md) | Measuring route programming rate end-to-end, pipeline stages, tooling, and measured results |
+| 19 | [Load Balancing](docs/19_load_balancing.md) | ECMP in SONiC — SAI next-hop group types, routeorch, weighted ECMP (WCMP), fine-grained ECMP, class-based forwarding, and the full weight pipeline |
+| 20 | [SAI Next-Hop Group Types](docs/20_nhg_types.md) | Per-type deep dive — Dynamic ECMP, Fine-Grain ECMP, W-ECMP, Class-Based Forwarding, Protection Groups, and Bridge Port groups |
+
+### Platform & Hardware
+
+| #  | Topic | Description |
+|----|-------|-------------|
+| 21 | [The PMON Container](docs/21_pmon_container.md) | Platform Monitor — Platform API, vendor plugins, xcvrd, psud, thermalctld, ledd, and hardware monitoring |
+| 22 | [Platform Configuration](docs/22_platform_configuration.md) | The device/ hierarchy, ONIE platform strings, HwSKU folders, port_config.ini, platform.json, and how platform files seed CONFIG_DB |
+| 23 | [Host Services](docs/23_host_services.md) | System health monitoring (healthd), monit, watchdog control, and other host-level systemd services |
+
+### Configuration & Lifecycle
+
+| #  | Topic | Description |
+|----|-------|-------------|
+| 24 | [Configuration Management](docs/24_configuration_management.md) | config_db.json, CLI, YANG validation, save, load, patch, replace, and reload |
+| 25 | [Config Reload](docs/25_config_reload.md) | CONFIG_DB flush and reload, service stop/start order, delayed service start, config reload vs alternatives |
+| 26 | [Reboot Types](docs/26_reboot_types.md) | Cold, soft, fast, warm, and express reboot comparison |
+| 27 | [Warm Reboot Deep Dive](docs/27_warm_reboot.md) | Pre-shutdown state saving, kexec kernel transition, reconciliation, warmboot-finalizer, container-level warm restart |
+
+### Observability & Troubleshooting
+
+| #  | Topic | Description |
+|----|-------|-------------|
+| 28 | [State Interactions](docs/28_state_interactions.md) | End-to-end data flows for routing, port events, VLAN, ARP |
+| 29 | [Logging](docs/29_logging.md) | Syslog, rsyslog routing, SWSS logging macros, SAI recording, log rotation, runtime tuning, techsupport, core dumps |
+| 30 | [Troubleshooting](docs/30_troubleshooting.md) | Debugging techniques for common SONiC problems |
