@@ -230,13 +230,13 @@ In all cases, `fpmsyncd` writes the updated `ROUTE_TABLE` entry to APPL_DB. `rou
 
 #### routeorch — Group Recreation
 
-`routeorch` does **not** incrementally add or remove individual members. Instead, when a route's next-hop set changes, it replaces the entire group:
+`routeorch` does **not** incrementally add or remove individual members. Instead, when a route's next-hop set changes, it uses a **make-before-break** strategy — creating the new group first, swinging the route to it, and only then deleting the old group. This ensures the route always points to a valid forwarding group; there is no window where packets would be dropped due to a missing group.
 
 1. Build a new `NextHopGroupKey` from the updated next-hop list.
 2. Check if a group with the new key already exists ([NHG Reuse](#nhg-reuse)) — if so, skip to step 4.
-3. Call `addNextHopGroup()` — creates a new NHG and all its members via the SAI bulk API.
-4. Update the route entry (`sai_route_api->set_route_entry_attribute()`) to point at the new group OID.
-5. Call `decreaseNextHopRefCount()` on the old group. If the reference count reaches zero (no other routes reference it), `removeNextHopGroup()` removes all members (bulk) and deletes the group.
+3. **Make** — call `addNextHopGroup()` to create a new NHG and all its members via the SAI bulk API.
+4. **Swing** — update the route entry (`sai_route_api->set_route_entry_attribute()`) to point at the new group OID.
+5. **Break** — call `decreaseNextHopRefCount()` on the old group. If the reference count reaches zero (no other routes reference it), `removeNextHopGroup()` removes all members (bulk) and deletes the group.
 
 The SAI calls for removing a member and a group:
 
@@ -278,7 +278,7 @@ Route 10.0.0.0/24 → group_oid_B          group_oid_A (deleted)
 4. `decreaseNextHopRefCount()` on old group (`group_oid_A`) → ref count reaches 0
 5. `removeNextHopGroup()` removes 3 members (bulk), then deletes the group
 
-This approach is simple but means every membership change involves creating a new group in the ASIC, even if only one member was added or removed.
+This make-before-break approach guarantees hitless transitions but means every membership change involves creating a new group in the ASIC, even if only one member was added or removed.
 
 
 ## NHG Orch (Explicit Groups)
