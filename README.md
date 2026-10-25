@@ -36,19 +36,29 @@ Read in order — each document builds on the concepts from the previous ones.
 | 09 | [Container Communication](docs/09_container_communication.md) | How containers talk to each other and to the host |
 | 10 | [IPC Mechanisms](docs/10_ipc_mechanisms.md) | The five messaging patterns daemons use to stay in sync |
 
-### SWSS, Orchagent & SAI
+### SWSS & Orchagent
 
 | #  | Topic | Description |
 |----|-------|-------------|
 | 11 | [The SWSS Container](docs/11_swss_container.md) | Manager daemons, sync daemons, and orchagent overview |
 | 12 | [Orchagent Deep Dive](docs/12_orchagent.md) | Orch architecture, task queues, SAI interaction, sync vs async mode |
-| 13 | [SAI and Syncd](docs/13_sai_and_syncd.md) | Switch Abstraction Interface, meta layer, syncd processing, VID/RID |
+
+### SAI & Syncd
+
+| #  | Topic | Description |
+|----|-------|-------------|
+| 13 | [SAI and Syncd](docs/13_sai_and_syncd.md) | The SAI API, meta layer, syncd processing, VID/RID |
 | 14 | [The SAI Object Model](docs/14_sai_object_model.md) | Object identification, attribute semantics, the group+member pattern, capability queries, bulk operations, stats, and notifications |
 | 15 | [Flex Counters](docs/15_flex_counters.md) | FlexCounterOrch, FLEX_COUNTER_DB, syncd polling, counter groups, and COUNTERS_DB |
 | 16 | [Flex Counter Groups Reference](docs/16_flex_counter_groups_reference.md) | Every SAI stat ID polled by each counter group — ports, queues, PGs, buffers, LAGs, tunnels, ACLs, and MACsec |
+
+### Data-Plane Programming
+
+| #  | Topic | Description |
+|----|-------|-------------|
 | 17 | [Ports and Host Interfaces](docs/17_ports_and_host_interfaces.md) | SAI port objects, the port initialization pipeline, PortInitDone, host interfaces, data-plane vs control-plane traffic, and tcpdump |
-| 18 | [The Forwarding Chain](docs/18_forwarding_chain.md) | The SAI forwarding object chain — the L2→L3 transition (router interfaces), source MAC, ARP/NDP neighbors, next-hop creation, and IntfsOrch / NeighOrch |
-| 19 | [Punting](docs/19_punting.md) | Sending packets from the ASIC to the CPU — fast path vs slow path, SAI trap objects, trap groups, CoPP rate limiting, coppmgrd, and CoppOrch |
+| 18 | [The Forwarding Chain](docs/18_forwarding_chain.md) | Router interfaces, source MAC, ARP/NDP neighbors, next-hop creation, and IntfsOrch / NeighOrch |
+| 19 | [Punting](docs/19_punting.md) | Packets from ASIC to CPU — fast path vs slow path, SAI trap objects, trap groups, CoPP rate limiting, coppmgrd, and CoppOrch |
 
 ### Routing & Forwarding
 
