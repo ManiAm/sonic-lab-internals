@@ -2,44 +2,34 @@
 
 > **Prerequisites**: [Orchagent Deep Dive](12_orchagent.md) — the select loop, `m_orchList` ordering, and `doTask()`. [The SAI Object Model](14_sai_object_model.md) — object IDs, entry keys, and the four operations.
 
-Before a route can be programmed into the ASIC, the lower-level objects it depends on must already exist. A route entry points to a next hop. A next hop references a router interface. A router interface sits on top of a port. This document covers these foundational SAI objects — ports, router interfaces, and neighbors — and the three orchagent modules that manage them: `PortsOrch`, `IntfsOrch`, and `NeighOrch`.
+Before the ASIC can forward any packet, the control plane must program a chain of SAI objects into it. These objects are created once — when a port is configured, an IP address is assigned, or a neighbor is learned — and then the ASIC uses them to forward every matching packet at line rate without further software involvement. Each object in the chain references the next one to its right:
 
+<img src="../pics/nh-flow.png" alt="segment" width="850">
 
-## The Forwarding Object Chain
+A **port** is the starting point — it represents a physical (or logical) Ethernet interface on the switch (e.g., `Ethernet0` at 100G). At boot time, ports are Layer 2 objects: they can bridge traffic within a VLAN, but the ASIC will not route IP packets through them.
 
-Every IP packet that the ASIC forwards at line rate traverses a chain of SAI objects. Each object in the chain references the one below it:
+A **router interface (RIF)** is what turns a port into a Layer 3 participant. When an operator assigns an IP address to a port, SONiC creates a RIF on top of it. The RIF gives the port an identity in the IP forwarding engine — it carries a source MAC address that the ASIC writes into every routed packet's L2 header on egress.
 
-```
-Route Entry          "to reach 10.1.0.0/24, use this next hop"
-    │
-    ▼
-Next Hop             "forward via 10.0.0.2 on this RIF"
-    │
-    ▼
-Router Interface     "L3 interface on Ethernet0"
-    │
-    ▼
-   Port              "physical Ethernet0, 100G"
-```
+A **neighbor entry** records the MAC address of a device one hop away, learned through ARP (IPv4) or NDP (IPv6). When the ASIC routes a packet toward a neighbor, it uses this MAC as the destination in the rewritten L2 header.
 
-> When a route has **multiple equal-cost paths**, the route entry points to a next-hop group instead of a single next hop. The group and its members are covered in [Load Balancing](20_load_balancing.md) and [SAI Next-Hop Group Types](21_nhg_types.md).
+A **next hop** is the forwarding target that route entries point to. It combines a neighbor's IP address with the RIF it is reachable through, giving the ASIC everything it needs to forward and rewrite in a single lookup. `NeighOrch` creates a next hop alongside every neighbor entry.
 
-The orchagent modules that manage these objects must run in dependency order. This is enforced by the [`m_orchList`](12_orchagent.md#the-main-select-loop) ordering:
+A **route entry** ties it all together: it maps a destination prefix (e.g., `10.1.0.0/24`) to a next-hop object, telling the ASIC "packets matching this prefix should be forwarded through this next hop." When a route has **multiple equal-cost paths**, the route entry points to a next-hop group instead of a single next hop — that is covered in [Load Balancing](20_load_balancing.md) and [SAI Next-Hop Group Types](21_nhg_types.md).
+
+Each object must exist before the objects above it can be created. This bottom-up dependency is enforced by the [`m_orchList`](12_orchagent.md#the-main-select-loop) ordering — each module runs only after the modules it depends on:
 
 ```
 SwitchOrch → PortsOrch → IntfsOrch → NeighOrch → NhgOrch → RouteOrch
 ```
 
-Each module depends on SAI objects created by the modules to its left: you cannot create a RIF on a port that does not exist, and you cannot create a neighbor on a RIF that does not exist.
+This document covers the three modules and objects in the lower half of the chain: `PortsOrch` (ports), `IntfsOrch` (router interfaces), and `NeighOrch` (neighbors and next hops).
 
 
 ## Ports (PortsOrch)
 
-A port is the most fundamental SAI object — it represents a physical or logical Ethernet interface on the switch.
-
 ### Port Objects in SAI
 
-Unlike most SAI objects that orchagent creates on demand, port objects **already exist** when the switch initializes. During `sai_switch_api->create_switch()`, the SAI implementation discovers the ASIC's physical ports and pre-creates a `SAI_OBJECT_TYPE_PORT` for each one. Orchagent retrieves the full list via `SAI_SWITCH_ATTR_PORT_LIST`:
+Unlike most SAI objects that orchagent creates on demand, port objects **already exist** when the switch initializes. During `sai_switch_api->create_switch()`, the SAI implementation discovers the ASIC's physical ports and pre-creates a `SAI_OBJECT_TYPE_PORT` for each one. `PortsOrch` retrieves the full list via `SAI_SWITCH_ATTR_PORT_LIST`:
 
 ```c
 sai_attribute_t attr;
@@ -49,7 +39,7 @@ attr.value.objlist.list  = port_oid_array;
 sai_switch_api->get_switch_attribute(switch_id, 1, &attr);
 ```
 
-`PortsOrch` then **configures** each pre-existing port with the desired attributes:
+`PortsOrch` then configures each pre-existing port with the desired attributes:
 
 | SAI Attribute | Purpose | Example |
 |---|---|---|
@@ -110,9 +100,7 @@ After this call, a Linux netdev named `Ethernet0` appears in the kernel. Packets
 
 ### The L2-to-L3 Transition
 
-A freshly initialized port is a **Layer 2** object — it can participate in bridging (VLANs, MAC learning, spanning tree) but the ASIC will not route IP packets through it. To make a port participate in IP routing, the ASIC needs a **Router Interface (RIF)** — a `SAI_OBJECT_TYPE_ROUTER_INTERFACE` — placed on top of the port.
-
-The RIF is what connects the port to the router's IP forwarding engine. It tells the ASIC: "this port has an IP identity; packets arriving here should be routed, not just bridged."
+A port starts as a Layer 2 object — it can bridge traffic but the ASIC will not route through it. Creating a `SAI_OBJECT_TYPE_ROUTER_INTERFACE` on top of the port promotes it to Layer 3. The RIF connects the port to the IP forwarding engine: it carries a source MAC, belongs to a virtual router (VRF), and can have IPv4 and IPv6 routing enabled independently.
 
 ### What Triggers RIF Creation
 
@@ -207,10 +195,10 @@ The `SRC_MAC_ADDRESS` attribute is important: when the ASIC routes a packet out 
 
 ### What a Neighbor Is
 
-A **neighbor** is a device directly reachable on a connected link — one IP hop away. The switch needs to know the neighbor's MAC address so it can construct the correct L2 header when forwarding packets toward it. This IP-to-MAC binding is called an **adjacency**.
+A **neighbor** is a device directly reachable on a connected link — one IP hop away. The switch must know the neighbor's MAC address to construct the correct Layer 2 header when forwarding packets toward it. This IP-to-MAC binding is called an **adjacency**, and it is discovered at runtime:
 
-- **IPv4** uses ARP (Address Resolution Protocol) to discover neighbors.
-- **IPv6** uses NDP (Neighbor Discovery Protocol).
+- **IPv4** — ARP (Address Resolution Protocol)
+- **IPv6** — NDP (Neighbor Discovery Protocol)
 
 ### How Neighbors Are Learned
 

@@ -323,7 +323,7 @@ A parent object defines the group. Each member object is a join object that link
 
 The diagram below shows a route (`10.99.0.0/24`) that points at a next-hop group consisting of two members. The circled numbers show the creation order — objects that are referenced must exist before the objects that reference them:
 
-<img src="../pics/next-hop-group.png" alt="Parent-member pattern" width="900">
+<img src="../pics/nhg-parent.png" alt="Parent-member pattern" width="900">
 
 Five objects are created in this order:
 
