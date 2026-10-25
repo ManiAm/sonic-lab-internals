@@ -15,7 +15,7 @@ Three SAI objects form the foundation of multi-path forwarding in SONiC:
 
 - **Next-hop group member** — a join object that attaches one next hop to a group. It stores two references: the group's OID (Object Identifier) and the next hop's OID. Adding or removing a member is how SONiC tells the ASIC to add or remove a path from the group.
 
-<img src="../pics/next-hop-group-overview.png" alt="Next-hop group object relationships: route entry, next-hop group, next-hop group members, and next hops" width="900">
+<img src="../pics/next-hop-group-overview.png" alt="segment" width="1000">
 
 The creation order matters: next hops must exist before members can reference them, and the group must exist before members can be added to it. For the full SAI object lifecycle see [Parent and Member](14_sai_object_model.md#parent-and-member).
 
