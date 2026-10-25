@@ -25,7 +25,7 @@ PMON is a **monitoring and reporting** container. It reads hardware state and pu
 - **Run routing protocols.** That is the BGP container's job.
 - **Apply user configuration.** That is the SWSS container's job (manager daemons read CONFIG_DB; PMON daemons read hardware state).
 - **Make forwarding decisions.** PMON has no involvement in the packet-forwarding pipeline.
-- **Aggregate system-wide health.** That is `healthd`'s job — a host-level systemd service that reads PMON's STATE_DB output and combines it with container/service liveness checks. See [Host Services](23_host_services.md#system-health-monitoring-healthd) for details.
+- **Aggregate system-wide health.** That is `healthd`'s job — a host-level systemd service that reads PMON's STATE_DB output and combines it with container/service liveness checks. See [Host Services](24_host_services.md#system-health-monitoring-healthd) for details.
 
 The two areas where PMON *writes* to hardware (rather than just reading) are LED control and fan speed control. These are physical platform actions, not data-plane actions — the details are covered in [Fan Speed Control](#fan-speed-control) later in this chapter.
 
@@ -234,7 +234,7 @@ The PMON container runs multiple independent daemons, each responsible for a spe
 | **sensord**     | Hardware voltage, temperature, and current sensors via Linux's `lm-sensors` framework | Configurable | None (logs alerts via syslog; CLI access via `sensors` command) |
 | **fancontrol**  | Fan speed regulation using Linux's `fancontrol` framework | Configurable | None (writes PWM values directly to sysfs) |
 
-> `sensord` and `fancontrol` are standard Linux packages (not SONiC-written Python daemons), but they run **inside the PMON container** alongside the other daemons, managed by supervisord. They are included only if the platform provides a `sensors.conf` or `fancontrol` configuration file respectively. During container startup, the entrypoint script copies `sensors.conf` from the [platform directory](22_platform_configuration.md) into `/etc/sensors.d/` inside the container, where lm-sensors loads it to get human-readable sensor names, value scaling, and alarm thresholds.
+> `sensord` and `fancontrol` are standard Linux packages (not SONiC-written Python daemons), but they run **inside the PMON container** alongside the other daemons, managed by supervisord. They are included only if the platform provides a `sensors.conf` or `fancontrol` configuration file respectively. During container startup, the entrypoint script copies `sensors.conf` from the [platform directory](23_platform_configuration.md) into `/etc/sensors.d/` inside the container, where lm-sensors loads it to get human-readable sensor names, value scaling, and alarm thresholds.
 
 > Do not confuse `sensord` with `sensormond`: `sensord` is a standard Linux daemon from the `lm-sensors` package that reads a static `sensors.conf` file, while `sensormond` is a SONiC-written Python daemon that reads voltage and current sensors through the Platform API.
 
@@ -500,4 +500,4 @@ On container stop, each daemon receives `SIGTERM`, cleans up its STATE_DB entrie
 
 ---
 
-**Previous**: [← SAI Next-Hop Group Types](20_nhg_types.md) · **Next**: [Platform Configuration →](22_platform_configuration.md)
+**Previous**: [← SAI Next-Hop Group Types](21_nhg_types.md) · **Next**: [Platform Configuration →](23_platform_configuration.md)

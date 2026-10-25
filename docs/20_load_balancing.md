@@ -1,6 +1,6 @@
 # Load Balancing in SONiC
 
-> **Prerequisites**: [SAI Object Model](14_sai_object_model.md) — understand SAI object types, attribute semantics, and the group+member pattern. [BGP Container](17_bgp_container.md) — understand the FRR integration and `bgpcfgd`.
+> **Prerequisites**: [SAI Object Model](14_sai_object_model.md) — understand SAI object types, attribute semantics, and the group+member pattern. [BGP Container](18_bgp_container.md) — understand the FRR integration and `bgpcfgd`.
 
 For a comprehensive treatment of data center fabric load balancing — Equal-Cost Multi-Path (ECMP) fundamentals, hash polarization, adaptive routing, and RDMA-specific constraints — see [DC-Load-Balancing](https://github.com/ManiAm/DC-Load-Balancing). This document focuses on how SONiC implements ECMP-based load balancing end-to-end: which Switch Abstraction Interface (SAI) object types the ASIC exposes, which orchagent modules consume them, and how the control-plane pipeline (FRR (Free Range Routing) → fpmsyncd → APPL_DB → orchagent → SAI) carries routes and weights into hardware.
 
@@ -125,7 +125,7 @@ typedef enum _sai_next_hop_group_type_t
 } sai_next_hop_group_type_t;
 ```
 
-The next hops themselves are independent of the group type — the same next-hop object can be referenced by groups of different types. However, some group types require additional attributes on their members. For example, ordered ECMP members carry a `SEQUENCE_ID` for priority, fine-grain ECMP members carry an `INDEX` for bucket position, and protection group members carry a `CONFIGURED_ROLE` (primary or standby). These per-member attributes are covered in each type's [dedicated section](20_nhg_types.md).
+The next hops themselves are independent of the group type — the same next-hop object can be referenced by groups of different types. However, some group types require additional attributes on their members. For example, ordered ECMP members carry a `SEQUENCE_ID` for priority, fine-grain ECMP members carry an `INDEX` for bucket position, and protection group members carry a `CONFIGURED_ROLE` (primary or standby). These per-member attributes are covered in each type's [dedicated section](21_nhg_types.md).
 
 
 ### How SONiC Selects the Group Type
@@ -148,7 +148,7 @@ This section covers routes that arrive through `ROUTE_TABLE` in APPL_DB. For mos
 
 ### Route Ingestion (fpmsyncd)
 
-FRR computes multi-path routes and sends them to `fpmsyncd` over a direct TCP connection (zebra's FPM socket). `fpmsyncd` parses these route updates and writes them into APPL_DB (for details on this pipeline, see [fpmsyncd — The Bridge to SONiC](17_bgp_container.md#fpmsyncd--the-bridge-to-sonic)):
+FRR computes multi-path routes and sends them to `fpmsyncd` over a direct TCP connection (zebra's FPM socket). `fpmsyncd` parses these route updates and writes them into APPL_DB (for details on this pipeline, see [fpmsyncd — The Bridge to SONiC](18_bgp_container.md#fpmsyncd--the-bridge-to-sonic)):
 
 ```text
 ROUTE_TABLE:10.0.0.0/24
@@ -309,4 +309,4 @@ This is more efficient for frequent updates but requires tracking individual mem
 
 ---
 
-**Previous**: [← The Route-Download Benchmark](18_benchmark.md) · **Next**: [SAI Next-Hop Group Types →](20_nhg_types.md)
+**Previous**: [← The Route-Download Benchmark](19_benchmark.md) · **Next**: [SAI Next-Hop Group Types →](21_nhg_types.md)

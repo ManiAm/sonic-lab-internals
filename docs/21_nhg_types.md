@@ -1,8 +1,8 @@
 # SAI Next-Hop Group Types
 
-> **Prerequisites**: [Load Balancing in SONiC](19_load_balancing.md) — understand SAI next-hop group objects, hash configuration, route programming through `routeorch`, NHG reuse, and member lifecycle before diving into individual group types.
+> **Prerequisites**: [Load Balancing in SONiC](20_load_balancing.md) — understand SAI next-hop group objects, hash configuration, route programming through `routeorch`, NHG reuse, and member lifecycle before diving into individual group types.
 
-This document covers each SAI next-hop group type in detail: its purpose, configuration (where applicable), and the SAI calls that program it into the ASIC. The [Weighted ECMP](#weighted-ecmp-w-ecmp) section is also included here; although its underlying SAI group type is Dynamic Unordered ECMP, its weight-handling pipeline spans `bgpcfgd`, `fpmsyncd`, and `routeorch` and is best understood alongside the other group types. For the shared route-ingestion and ASIC-programming pipeline, see [Route Programming (routeorch)](19_load_balancing.md#route-programming-routeorch).
+This document covers each SAI next-hop group type in detail: its purpose, configuration (where applicable), and the SAI calls that program it into the ASIC. The [Weighted ECMP](#weighted-ecmp-w-ecmp) section is also included here; although its underlying SAI group type is Dynamic Unordered ECMP, its weight-handling pipeline spans `bgpcfgd`, `fpmsyncd`, and `routeorch` and is best understood alongside the other group types. For the shared route-ingestion and ASIC-programming pipeline, see [Route Programming (routeorch)](20_load_balancing.md#route-programming-routeorch).
 
 
 ## Dynamic Unordered ECMP
@@ -110,7 +110,7 @@ sai_next_hop_group_api->create_next_hop_group_member(&member_oid, switch_id, 4, 
 
 ## Fine-Grain ECMP (FG-ECMP)
 
-Fine-Grain ECMP gives software full control over a fixed-size bucket array with explicit per-bucket member assignment. It is implemented by `fgnhgorch` using `SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP`. When a route arriving through `ROUTE_TABLE` matches a prefix in `FG_NHG_PREFIX`, `routeorch` delegates it to `fgnhgorch` (step 3 in the [ASIC programming](19_load_balancing.md#asic-programming-routeorch) pipeline).
+Fine-Grain ECMP gives software full control over a fixed-size bucket array with explicit per-bucket member assignment. It is implemented by `fgnhgorch` using `SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP`. When a route arriving through `ROUTE_TABLE` matches a prefix in `FG_NHG_PREFIX`, `routeorch` delegates it to `fgnhgorch` (step 3 in the [ASIC programming](20_load_balancing.md#asic-programming-routeorch) pipeline).
 
 ### Configuration
 
@@ -228,7 +228,7 @@ exit
 
 ### Weight Propagation Through fpmsyncd
 
-The route-ingestion pipeline described in [Route Ingestion](19_load_balancing.md#route-ingestion-fpmsyncd) carries equal-cost routes without weights. When W-ECMP is active, FRR includes per-next-hop weights in the route updates it sends to `fpmsyncd` over the FPM socket. `fpmsyncd` extracts these weights alongside the next hops.
+The route-ingestion pipeline described in [Route Ingestion](20_load_balancing.md#route-ingestion-fpmsyncd) carries equal-cost routes without weights. When W-ECMP is active, FRR includes per-next-hop weights in the route updates it sends to `fpmsyncd` over the FPM socket. `fpmsyncd` extracts these weights alongside the next hops.
 
 > **Netlink weight offset**: The FPM socket carries route updates in netlink message format. In this format, next-hop weights are zero-based (a weight of 0 means "weight 1"). `fpmsyncd` adds 1 when parsing these messages so the value written to APPL_DB reflects the true weight.
 
@@ -431,4 +431,4 @@ These groups provide Layer 2 ECMP — distributing traffic across multiple bridg
 
 ---
 
-**Previous**: [← Load Balancing in SONiC](19_load_balancing.md) · **Next**: [The PMON Container →](21_pmon_container.md)
+**Previous**: [← Load Balancing in SONiC](20_load_balancing.md) · **Next**: [The PMON Container →](22_pmon_container.md)

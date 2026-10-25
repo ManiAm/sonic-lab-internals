@@ -1,6 +1,6 @@
 # SONiC Platform Configuration
 
-> **Prerequisites**: [The PMON Container](21_pmon_container.md) (the Platform API and vendor plugins that consume these files) and [Core Redis Databases](08_redis_databases.md) (CONFIG_DB as the runtime source of truth).
+> **Prerequisites**: [The PMON Container](22_pmon_container.md) (the Platform API and vendor plugins that consume these files) and [Core Redis Databases](08_redis_databases.md) (CONFIG_DB as the runtime source of truth).
 
 SONiC runs on hundreds of switch models from many vendors. To keep the OS code hardware-independent, every platform-specific detail — port layouts, sensor mappings, fan policies, firmware metadata — is captured in data files rather than in code. This document explains those files: where they live, what each one does, and how they seed the running configuration at boot.
 
@@ -106,14 +106,14 @@ These files describe the **chassis** — everything about the box that is true r
 | `platform.json` | Capabilities of the chassis: port-to-lane pools and supported breakout modes (ways to split one physical port into multiple logical ports), number of fans/PSUs/thermals, and feature flags (e.g. whether ASIC firmware may be field-upgraded by the OS) |
 | `platform_asic` | One-line file naming the ASIC vendor (e.g. `broadcom`, `mellanox`, `barefoot`). SONiC uses this to select the correct syncd variant and SAI library. |
 | `default_sku` | Which HwSKU to use when nothing else selects one — e.g. `DellEMC-Z9332f-O32 t1` (SKU name + default role). See [How the Active SKU Is Selected](#how-the-active-sku-is-selected). |
-| `sonic_platform-*.whl` | The Platform API package — Python classes that PMON uses to read fans, PSUs, thermals, EEPROM, and transceivers. Built at image time from the vendor's `sonic_platform/` source directory. See [The PMON Container](21_pmon_container.md) for how this package is loaded and used. |
+| `sonic_platform-*.whl` | The Platform API package — Python classes that PMON uses to read fans, PSUs, thermals, EEPROM, and transceivers. Built at image time from the vendor's `sonic_platform/` source directory. See [The PMON Container](22_pmon_container.md) for how this package is loaded and used. |
 | `plugins/` | Legacy Python plugins for vendor-specific behavior (SFP access, LED control). Newer platforms use the `sonic_platform` wheel instead. |
-| `pmon_daemon_control.json` | Which platform-monitor daemons run on this box (some platforms have no PSU daemon, etc.). See [Daemon Control](21_pmon_container.md#daemon-control-enabling-and-disabling-daemons). |
-| `thermal_policy.json` | Fan-speed policy: which thermal conditions drive which fan actions. See [Fan Speed Control](21_pmon_container.md#fan-speed-control). |
-| `sensors.conf` | lm-sensors mapping: names, scaling, and alarm thresholds for voltage/temp sensors. See [sensord](21_pmon_container.md#the-daemons-inside-pmon). |
+| `pmon_daemon_control.json` | Which platform-monitor daemons run on this box (some platforms have no PSU daemon, etc.). See [Daemon Control](22_pmon_container.md#daemon-control-enabling-and-disabling-daemons). |
+| `thermal_policy.json` | Fan-speed policy: which thermal conditions drive which fan actions. See [Fan Speed Control](22_pmon_container.md#fan-speed-control). |
+| `sensors.conf` | lm-sensors mapping: names, scaling, and alarm thresholds for voltage/temp sensors. See [sensord](22_pmon_container.md#the-daemons-inside-pmon). |
 | `installer.conf` | Boot/console settings consumed at image install (console port, baud rate) |
-| `system_health_monitoring_config.json` | What the system-health service (`healthd`) checks/ignores on this platform — polling interval, devices to skip, LED colors. See [System Health Monitoring](23_host_services.md#system-health-monitoring-healthd). |
-| `pcie.yaml` | Expected PCIe topology, used by the PCIe health checker. See [pcie-check](23_host_services.md#pcie-check). |
+| `system_health_monitoring_config.json` | What the system-health service (`healthd`) checks/ignores on this platform — polling interval, devices to skip, LED colors. See [System Health Monitoring](24_host_services.md#system-health-monitoring-healthd). |
+| `pcie.yaml` | Expected PCIe topology, used by the PCIe health checker. See [pcie-check](24_host_services.md#pcie-check). |
 | `platform_components.json` | Firmware-upgradable components (BIOS, CPLD, FPGA, ONIE) for `fwutil` |
 
 Vendors are free to add extras (firmware bundles, environment configs, custom reboot scripts, porting notes); the files above are the ones that SONiC infrastructure looks for.
@@ -298,4 +298,4 @@ Rule of thumb: if the layout you want already exists as a SKU folder, switch SKU
 
 ---
 
-**Previous**: [← The PMON Container](21_pmon_container.md) · **Next**: [Host Services →](23_host_services.md)
+**Previous**: [← The PMON Container](22_pmon_container.md) · **Next**: [Host Services →](24_host_services.md)
