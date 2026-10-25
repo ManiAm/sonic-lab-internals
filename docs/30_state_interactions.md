@@ -325,4 +325,4 @@ sonic-db-cli ASIC_DB KEYS '*ROUTE*10.1.0.0*'
 
 ---
 
-**Previous**: [← Warm Reboot Deep Dive](28_warm_reboot.md) · **Next**: [Logging →](30_logging.md)
+**Previous**: [← Warm Reboot Deep Dive](29_warm_reboot.md) · **Next**: [Logging →](31_logging.md)

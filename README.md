@@ -47,37 +47,38 @@ Read in order — each document builds on the concepts from the previous ones.
 | 15 | [Flex Counters](docs/15_flex_counters.md) | FlexCounterOrch, FLEX_COUNTER_DB, syncd polling, counter groups, and COUNTERS_DB |
 | 16 | [Flex Counter Groups Reference](docs/16_flex_counter_groups_reference.md) | Every SAI stat ID polled by each counter group — ports, queues, PGs, buffers, LAGs, tunnels, ACLs, and MACsec |
 | 17 | [Ports, Interfaces, and Neighbors](docs/17_ports_interfaces_neighbors.md) | The forwarding object chain — SAI ports, the L2→L3 transition (router interfaces), ARP/NDP neighbors, next-hop creation, and PortsOrch / IntfsOrch / NeighOrch |
+| 18 | [Punting](docs/18_punting.md) | Sending packets from the ASIC to the CPU — fast path vs slow path, SAI trap objects, trap groups, CoPP rate limiting, coppmgrd, and CoppOrch |
 
 ### Routing & Forwarding
 
 | #  | Topic | Description |
 |----|-------|-------------|
-| 18 | [The BGP Container and FRR](docs/18_bgp_container.md) | FRRouting, zebra, fpmsyncd, route programming, RIB/FIB mapping, unified/split mode |
-| 19 | [The BGP Route-Download Benchmark](docs/19_benchmark.md) | Measuring route programming rate end-to-end, pipeline stages, tooling, and measured results |
-| 20 | [Load Balancing](docs/20_load_balancing.md) | ECMP in SONiC — SAI next-hop group types, routeorch, weighted ECMP (WCMP), fine-grained ECMP, class-based forwarding, and the full weight pipeline |
-| 21 | [SAI Next-Hop Group Types](docs/21_nhg_types.md) | Per-type deep dive — Dynamic ECMP, Fine-Grain ECMP, W-ECMP, Class-Based Forwarding, Protection Groups, and Bridge Port groups |
+| 19 | [The BGP Container and FRR](docs/19_bgp_container.md) | FRRouting, zebra, fpmsyncd, route programming, RIB/FIB mapping, unified/split mode |
+| 20 | [The BGP Route-Download Benchmark](docs/20_benchmark.md) | Measuring route programming rate end-to-end, pipeline stages, tooling, and measured results |
+| 21 | [Load Balancing](docs/21_load_balancing.md) | ECMP in SONiC — SAI next-hop group types, routeorch, weighted ECMP (WCMP), fine-grained ECMP, class-based forwarding, and the full weight pipeline |
+| 22 | [SAI Next-Hop Group Types](docs/22_nhg_types.md) | Per-type deep dive — Dynamic ECMP, Fine-Grain ECMP, W-ECMP, Class-Based Forwarding, Protection Groups, and Bridge Port groups |
 
 ### Platform & Hardware
 
 | #  | Topic | Description |
 |----|-------|-------------|
-| 22 | [The PMON Container](docs/22_pmon_container.md) | Platform Monitor — Platform API, vendor plugins, xcvrd, psud, thermalctld, ledd, and hardware monitoring |
-| 23 | [Platform Configuration](docs/23_platform_configuration.md) | The device/ hierarchy, ONIE platform strings, HwSKU folders, port_config.ini, platform.json, and how platform files seed CONFIG_DB |
-| 24 | [Host Services](docs/24_host_services.md) | System health monitoring (healthd), monit, watchdog control, and other host-level systemd services |
+| 23 | [The PMON Container](docs/23_pmon_container.md) | Platform Monitor — Platform API, vendor plugins, xcvrd, psud, thermalctld, ledd, and hardware monitoring |
+| 24 | [Platform Configuration](docs/24_platform_configuration.md) | The device/ hierarchy, ONIE platform strings, HwSKU folders, port_config.ini, platform.json, and how platform files seed CONFIG_DB |
+| 25 | [Host Services](docs/25_host_services.md) | System health monitoring (healthd), monit, watchdog control, and other host-level systemd services |
 
 ### Configuration & Lifecycle
 
 | #  | Topic | Description |
 |----|-------|-------------|
-| 25 | [Configuration Management](docs/25_configuration_management.md) | config_db.json, CLI, YANG validation, save, load, patch, replace, and reload |
-| 26 | [Config Reload](docs/26_config_reload.md) | CONFIG_DB flush and reload, service stop/start order, delayed service start, config reload vs alternatives |
-| 27 | [Reboot Types](docs/27_reboot_types.md) | Cold, soft, fast, warm, and express reboot comparison |
-| 28 | [Warm Reboot Deep Dive](docs/28_warm_reboot.md) | Pre-shutdown state saving, kexec kernel transition, reconciliation, warmboot-finalizer, container-level warm restart |
+| 26 | [Configuration Management](docs/26_configuration_management.md) | config_db.json, CLI, YANG validation, save, load, patch, replace, and reload |
+| 27 | [Config Reload](docs/27_config_reload.md) | CONFIG_DB flush and reload, service stop/start order, delayed service start, config reload vs alternatives |
+| 28 | [Reboot Types](docs/28_reboot_types.md) | Cold, soft, fast, warm, and express reboot comparison |
+| 29 | [Warm Reboot Deep Dive](docs/29_warm_reboot.md) | Pre-shutdown state saving, kexec kernel transition, reconciliation, warmboot-finalizer, container-level warm restart |
 
 ### Observability & Troubleshooting
 
 | #  | Topic | Description |
 |----|-------|-------------|
-| 29 | [State Interactions](docs/29_state_interactions.md) | End-to-end data flows for routing, port events, VLAN, ARP |
-| 30 | [Logging](docs/30_logging.md) | Syslog, rsyslog routing, SWSS logging macros, SAI recording, log rotation, runtime tuning, techsupport, core dumps |
-| 31 | [Troubleshooting](docs/31_troubleshooting.md) | Debugging techniques for common SONiC problems |
+| 30 | [State Interactions](docs/30_state_interactions.md) | End-to-end data flows for routing, port events, VLAN, ARP |
+| 31 | [Logging](docs/31_logging.md) | Syslog, rsyslog routing, SWSS logging macros, SAI recording, log rotation, runtime tuning, techsupport, core dumps |
+| 32 | [Troubleshooting](docs/32_troubleshooting.md) | Debugging techniques for common SONiC problems |

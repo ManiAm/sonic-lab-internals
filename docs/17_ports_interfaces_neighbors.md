@@ -14,7 +14,7 @@ A **neighbor entry** records the MAC address of a device one hop away, learned t
 
 A **next hop** is the forwarding target that route entries point to. It combines a neighbor's IP address with the RIF it is reachable through, giving the ASIC everything it needs to forward and rewrite in a single lookup. `NeighOrch` creates a next hop alongside every neighbor entry.
 
-A **route entry** ties it all together: it maps a destination prefix (e.g., `10.20.0.0/24`) to a next-hop object, telling the ASIC "packets matching this prefix should be forwarded through this next hop." When a route has **multiple equal-cost paths**, the route entry points to a next-hop group instead of a single next hop — that is covered in [Load Balancing](20_load_balancing.md).
+A **route entry** ties it all together: it maps a destination prefix (e.g., `10.20.0.0/24`) to a next-hop object, telling the ASIC "packets matching this prefix should be forwarded through this next hop." When a route has **multiple equal-cost paths**, the route entry points to a next-hop group instead of a single next hop — that is covered in [Load Balancing](21_load_balancing.md).
 
 Each object must exist before the objects above it can be created. This bottom-up dependency is enforced by the [`m_orchList`](12_orchagent.md#the-main-select-loop) ordering — each module runs only after the modules it depends on:
 
@@ -80,7 +80,7 @@ This guarantees that port OIDs are available before any downstream Orch (IntfsOr
 
 ### Host Interfaces
 
-For each physical port, `PortsOrch` also creates a **host interface** (`SAI_OBJECT_TYPE_HOSTIF`). This SAI object connects the ASIC port to a Linux network device (netdev), allowing the CPU to send and receive packets on that port — for example, ARP requests, BGP control packets, or LLDP frames.
+For each physical port, `PortsOrch` creates a **host interface** (`SAI_OBJECT_TYPE_HOSTIF`). This SAI object creates a Linux network device (netdev) in the kernel and links it to the corresponding ASIC port:
 
 ```c
 sai_attribute_t hostif_attrs[3];
@@ -93,7 +93,23 @@ strncpy(hostif_attrs[2].value.chardata, "Ethernet8", SAI_HOSTIF_NAME_SIZE);
 sai_hostif_api->create_hostif(&hostif_oid, switch_id, 3, hostif_attrs);
 ```
 
-After this call, a Linux netdev named `Ethernet8` appears in the kernel. Packets arriving on the physical port that are destined for the CPU (control-plane traffic) are delivered through this netdev, and packets the CPU sends out through `Ethernet8` are transmitted on the physical port.
+After this call, a Linux netdev named `Ethernet8` appears in the kernel. It looks like a normal network interface — it has a MAC address, an MTU, you can assign IP addresses to it, and user-space processes can open sockets on it. But it is **not** a traditional NIC driver interface. It is a virtual netdev created by SAI to bridge between the ASIC and the CPU.
+
+#### What Flows Through a Host Interface
+
+**Data-plane traffic never touches host interfaces.** When the ASIC forwards packets at line rate — millions of packets per second — it does so entirely in hardware. Packets are matched against route entries, rewritten, and sent out egress ports without ever reaching the CPU or the Linux kernel.
+
+Only **control-plane traffic** — packets the ASIC deliberately redirects to the CPU — flows through host interfaces. How the ASIC decides which packets to redirect, and how SONiC rate-limits them to protect the CPU, is covered in the [Punting](18_punting.md) document.
+
+#### What This Means for tcpdump
+
+Because only punted packets reach the kernel, running `tcpdump -i Ethernet8` captures **only control-plane traffic** — ARP, BGP, LLDP, ICMP, and similar. The data-plane packets being forwarded at line rate through the same physical port are invisible to `tcpdump` because they never leave the ASIC.
+
+| Traffic type | Path | Visible to `tcpdump`? |
+|---|---|---|
+| Data plane (forwarded at line rate) | Ingress port → ASIC → egress port | No |
+| Control plane (punted to CPU) | ASIC → host interface → kernel | Yes |
+| CPU-originated (e.g., BGP update) | Kernel → host interface → ASIC → wire | Yes |
 
 
 ## Router Interfaces (IntfsOrch)
@@ -283,7 +299,7 @@ This matches the EEPROM — confirming the full path from hardware to software.
 
 Unless explicitly overridden at any level, **every RIF on the switch shares the same source MAC**. This is standard for IP routing: each hop is identified by its IP address, not its MAC, so a single shared MAC is sufficient.
 
-> [`syseepromd`](22_pmon_container.md#syseepromd--system-eeprom-daemon) also reads the EEPROM at boot and publishes the base MAC and other TLV fields (serial number, platform name, vendor) to the `EEPROM_INFO` table in STATE_DB — this path is for monitoring and CLI display (`show platform syseeprom`), not for programming the ASIC. For how `DEVICE_METADATA` is populated during first boot, see [Platform Configuration](23_platform_configuration.md).
+> [`syseepromd`](23_pmon_container.md#syseepromd--system-eeprom-daemon) also reads the EEPROM at boot and publishes the base MAC and other TLV fields (serial number, platform name, vendor) to the `EEPROM_INFO` table in STATE_DB — this path is for monitoring and CLI display (`show platform syseeprom`), not for programming the ASIC. For how `DEVICE_METADATA` is populated during first boot, see [Platform Configuration](24_platform_configuration.md).
 
 
 ## Neighbors and Next Hops (NeighOrch)
@@ -347,7 +363,7 @@ nh_attrs[2].value.oid = rif_oid;                     /* same RIF */
 sai_next_hop_api->create_next_hop(&nh_oid, switch_id, 3, nh_attrs);
 ```
 
-The `nh_oid` returned by the second call is the forwarding target that the rest of the system references. For a single-path route, `RouteOrch` sets `SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID` directly to this OID. For multi-path ECMP routes, `RouteOrch` or `NhgOrch` creates a next-hop group member with `SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID` pointing to this OID — the member is the join object that attaches the next hop to the group (see the [next-hop group diagram](20_load_balancing.md)).
+The `nh_oid` returned by the second call is the forwarding target that the rest of the system references. For a single-path route, `RouteOrch` sets `SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID` directly to this OID. For multi-path ECMP routes, `RouteOrch` or `NhgOrch` creates a next-hop group member with `SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID` pointing to this OID — the member is the join object that attaches the next hop to the group (see the [next-hop group diagram](21_load_balancing.md)).
 
 
 ## Putting It All Together
@@ -408,4 +424,4 @@ The dependency chain flows strictly downward: removing a port requires first rem
 
 ---
 
-**Previous**: [← Flex Counter Groups Reference](16_flex_counter_groups_reference.md) · **Next**: [The BGP Container and FRR →](18_bgp_container.md)
+**Previous**: [← Flex Counter Groups Reference](16_flex_counter_groups_reference.md) · **Next**: [Punting →](18_punting.md)

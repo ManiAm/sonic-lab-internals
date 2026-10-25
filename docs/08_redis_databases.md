@@ -36,7 +36,7 @@ INTERFACE|Ethernet0|10.0.0.2/31     → {}
 
 - Changes to CONFIG_DB trigger events that manager daemons pick up and process. The specific notification mechanism (key-space notifications via `SubscriberStateTable`) is covered in [IPC Mechanisms — Pattern 1](10_ipc_mechanisms.md#pattern-1-subscriberstatetable-key-space-notifications).
 
-- A YANG check runs in the program that writes CONFIG_DB. Redis itself has no schema. RESTCONF, gNMI, KLISH, `config apply-patch`, and `config replace` check before writing. `config interface`, `config vlan`, `config load`, `sonic-cfggen --write-to-db`, and a direct Redis write store the fields as given. The full comparison is in [Configuration Management — YANG Validation](25_configuration_management.md#yang-validation).
+- A YANG check runs in the program that writes CONFIG_DB. Redis itself has no schema. RESTCONF, gNMI, KLISH, `config apply-patch`, and `config replace` check before writing. `config interface`, `config vlan`, `config load`, `sonic-cfggen --write-to-db`, and a direct Redis write store the fields as given. The full comparison is in [Configuration Management — YANG Validation](26_configuration_management.md#yang-validation).
 
 ## APPL_DB
 
@@ -170,7 +170,7 @@ COUNTERS:oid:0x1000000000003
 
 Originally stored dynamic log-level settings for SONiC daemons. As of database schema version 3.0.5, log-level settings have been migrated to CONFIG_DB (the `LOGGER` table). The `db_migrator` automatically copies any remaining LOGLEVEL_DB entries into CONFIG_DB and deletes them. LOGLEVEL_DB still exists as a defined database (ID 3) but is no longer read or written by any daemon.
 
-> For runtime log-level commands, see [Logging — Runtime Log-Level Tuning](30_logging.md#runtime-log-level-tuning).
+> For runtime log-level commands, see [Logging — Runtime Log-Level Tuning](31_logging.md#runtime-log-level-tuning).
 
 ## Data Flow Example: Configuring a Port
 
