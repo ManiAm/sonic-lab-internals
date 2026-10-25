@@ -357,7 +357,7 @@ sudo warm-reboot
 
 On NVIDIA Spectrum switches, `sudo warm-reboot` internally runs as `fastfast-reboot` with `SONIC_BOOT_TYPE=fastfast`. The flow is the same, but `ASIC_DB`, `COUNTERS_DB`, and `FLEX_COUNTER_DB` are flushed before the snapshot, and syncd starts with SAI start type 3 instead of 1.
 
-For the full step-by-step walkthrough — pre-shutdown checks, orchagent freeze, syncd state save, reconciliation per container, and the warmboot-finalizer — see [Warm Reboot Deep Dive](29_warm_reboot.md).
+For the full step-by-step walkthrough — pre-shutdown checks, orchagent freeze, syncd state save, reconciliation per container, and the warmboot-finalizer — see [Warm Reboot Deep Dive](30_warm_reboot.md).
 
 
 
@@ -426,4 +426,4 @@ Fast, warm, and express still need Graceful Restart on the BGP neighbors and LAC
 
 ---
 
-**Previous**: [← Config Reload](27_config_reload.md) · **Next**: [Warm Reboot Deep Dive →](29_warm_reboot.md)
+**Previous**: [← Config Reload](28_config_reload.md) · **Next**: [Warm Reboot Deep Dive →](30_warm_reboot.md)

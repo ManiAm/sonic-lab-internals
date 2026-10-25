@@ -1,6 +1,6 @@
 # Host Services
 
-> **Prerequisites**: [Container Run Time](05_container_run_time.md) (how systemd manages SONiC containers), [Core Redis Databases](08_redis_databases.md) (STATE_DB and CONFIG_DB roles), and [The PMON Container](23_pmon_container.md) (the hardware monitoring daemons whose STATE_DB output several host services consume).
+> **Prerequisites**: [Container Run Time](05_container_run_time.md) (how systemd manages SONiC containers), [Core Redis Databases](08_redis_databases.md) (STATE_DB and CONFIG_DB roles), and [The PMON Container](24_pmon_container.md) (the hardware monitoring daemons whose STATE_DB output several host services consume).
 
 SONiC runs most of its functionality inside Docker containers — SWSS, Syncd, BGP, PMON, and so on. But some tasks cannot run inside a container. Checking whether containers themselves are alive, arming a hardware watchdog, setting up host networking, and finalizing a warm reboot all require direct access to the host OS. These tasks are handled by **host-level systemd services** that run directly on the switch, outside of any container.
 
@@ -37,7 +37,7 @@ Several one-shot services run at boot to configure the host environment before o
 | `rsyslog-config` | Configures remote syslog forwarding destinations. |
 | `logrotate-config` | Configures log rotation to prevent disk exhaustion. |
 
-On a `config reload`, many of these are re-triggered as part of the service restart sequence (see [Config Reload](27_config_reload.md)).
+On a `config reload`, many of these are re-triggered as part of the service restart sequence (see [Config Reload](28_config_reload.md)).
 
 
 
@@ -121,7 +121,7 @@ The `show system-health summary` CLI command reads from `SYSTEM_HEALTH_INFO` in 
 
 ### Configuration
 
-Each platform provides a `system_health_monitoring_config.json` file in its [platform directory](24_platform_configuration.md) to tell `healthd` what to skip or customize. For example, the Celestica Seastone DX010:
+Each platform provides a `system_health_monitoring_config.json` file in its [platform directory](25_platform_configuration.md) to tell `healthd` what to skip or customize. For example, the Celestica Seastone DX010:
 
 ```json
 {
@@ -165,12 +165,12 @@ The **watchdog-control** service runs after the SWSS container is up (`After=sws
 
 ## pcie-check
 
-A one-shot service that runs early in boot. It scans the PCIe bus — the high-speed hardware bus that connects the switch ASIC, NICs, and other cards to the CPU — and compares the discovered devices against the platform's expected device list ([`pcie.yaml`](24_platform_configuration.md)). If a device is missing (indicating a PCIe link failure or a hardware fault), it logs an error. This catches hardware problems before they manifest as mysterious container failures later in the boot sequence.
+A one-shot service that runs early in boot. It scans the PCIe bus — the high-speed hardware bus that connects the switch ASIC, NICs, and other cards to the CPU — and compares the discovered devices against the platform's expected device list ([`pcie.yaml`](25_platform_configuration.md)). If a device is missing (indicating a PCIe link failure or a hardware fault), it logs an error. This catches hardware problems before they manifest as mysterious container failures later in the boot sequence.
 
 
 ## warmboot-finalizer
 
-After a warm reboot, the **warmboot-finalizer** service monitors reconciliation progress and declares warm reboot complete once all critical containers have finished. See [The Warmboot Finalizer](29_warm_reboot.md#the-warmboot-finalizer) for the full details.
+After a warm reboot, the **warmboot-finalizer** service monitors reconciliation progress and declares warm reboot complete once all critical containers have finished. See [The Warmboot Finalizer](30_warm_reboot.md#the-warmboot-finalizer) for the full details.
 
 
 ## Maintenance Services
@@ -182,4 +182,4 @@ After a warm reboot, the **warmboot-finalizer** service monitors reconciliation 
 
 ---
 
-**Previous**: [← Platform Configuration](24_platform_configuration.md) · **Next**: [Configuration Management →](26_configuration_management.md)
+**Previous**: [← Platform Configuration](25_platform_configuration.md) · **Next**: [Configuration Management →](27_configuration_management.md)

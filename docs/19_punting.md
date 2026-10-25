@@ -1,8 +1,8 @@
 # Punting — Sending Packets from the ASIC to the CPU
 
-> **Prerequisites**: [Ports, Interfaces, and Neighbors](17_ports_interfaces_neighbors.md) — host interfaces, the SAI forwarding chain, and why data-plane traffic never reaches the CPU.
+> **Prerequisites**: [Ports and Host Interfaces](17_ports_and_host_interfaces.md) — host interfaces and why data-plane traffic never reaches the CPU. [The Forwarding Chain](18_forwarding_chain.md) — the SAI forwarding object chain.
 
-The [previous document](17_ports_interfaces_neighbors.md#what-flows-through-a-host-interface) introduced host interfaces and the key distinction: data-plane traffic is forwarded entirely in the ASIC at line rate, while control-plane traffic is **punted** — redirected from the ASIC to the CPU through host interfaces. This document covers the punt mechanism in detail: how the ASIC decides which packets to send to the CPU, how those decisions are programmed through SAI, and how CoPP (Control Plane Policing) rate-limits punted traffic to protect the CPU.
+[Ports and Host Interfaces](17_ports_and_host_interfaces.md#what-flows-through-a-host-interface) introduced host interfaces and the key distinction: data-plane traffic is forwarded entirely in the ASIC at line rate, while control-plane traffic is **punted** — redirected from the ASIC to the CPU through host interfaces. This document covers the punt mechanism in detail: how the ASIC decides which packets to send to the CPU, how those decisions are programmed through SAI, and how CoPP (Control Plane Policing) rate-limits punted traffic to protect the CPU.
 
 
 ## Fast Path vs Slow Path
@@ -186,4 +186,4 @@ The reverse direction — CPU to wire — is simpler. When a daemon sends a pack
 
 ---
 
-**Previous**: [← Ports, Interfaces, and Neighbors](17_ports_interfaces_neighbors.md) · **Next**: [The BGP Container and FRR →](19_bgp_container.md)
+**Previous**: [← The Forwarding Chain](18_forwarding_chain.md) · **Next**: [The BGP Container and FRR →](20_bgp_container.md)
