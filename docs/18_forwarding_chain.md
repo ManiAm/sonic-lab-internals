@@ -2,40 +2,14 @@
 
 > **Prerequisites**: [Ports and Host Interfaces](17_ports_and_host_interfaces.md) — port initialization, host interfaces, and the data-plane vs control-plane distinction. [The SAI Object Model](14_sai_object_model.md) — object IDs, entry keys, and the four operations.
 
-Consider the following topology. This switch has IP `10.0.0.201` on `Ethernet8`, connected to a neighbor at `10.0.0.202` via a point-to-point `/30` link. A remote network, `10.20.0.0/24`, is reachable through that neighbor — the switch learned this via a routing protocol:
+A **port** is the bottom of the forwarding chain — it represents a physical (or logical) Ethernet interface on the switch (e.g., `Ethernet8` at 100G). At boot time, ports are Layer 2 (L2) objects: they can bridge traffic but cannot route IP packets. Port initialization — how `PortsOrch` creates SAI port objects and host interfaces — is covered in the [previous document](17_ports_and_host_interfaces.md).
 
-<img src="../pics/forwarding-topology.png" alt="Forwarding topology example" width="800">
-
-When a packet destined for `10.20.0.0/24` arrives at this switch, the switch does not need to know the full path to the destination. It only needs to know: **hand this packet to my neighbor `10.0.0.202` — they know how to get it there.** This is hop-by-hop IP routing: each router decides only the next step, not the entire journey.
-
-To make that single hop work, the ASIC needs to know three things: which **port** to send the packet out of, what **source MAC** to write (its own), and what **destination MAC** to write (the neighbor's). SONiC programs this information into the ASIC as a chain of SAI objects — each one references the next — plus a neighbor entry that provides the destination MAC:
-
-<img src="../pics/nh-flow.png" alt="SAI forwarding object chain" width="850">
-
-A **route entry** is the starting point of every forwarding decision. It maps a destination prefix (e.g., `10.20.0.0/24`) to a next-hop object, telling the ASIC "packets matching this prefix should be forwarded through this next hop." When a route has **multiple equal-cost paths**, the route entry points to a next-hop group instead of a single next hop — that is covered in [Load Balancing](22_load_balancing.md).
-
-A **next hop** is the forwarding target that the route entry points to. It combines the neighbor's IP address (`10.0.0.202`) with the RIF it is reachable through, giving the ASIC the information it needs to determine the egress port and look up the destination MAC from the neighbor entry. `NeighOrch` creates a next hop alongside every neighbor entry.
-
-A **neighbor entry** maps the neighbor's IP address to its MAC address, learned through ARP (IPv4) or NDP (IPv6). The IP is the **remote peer's** address and the ASIC looks it up by `{rif, neighbor_ip}` at egress to get the destination MAC for L2 header rewriting.
-
-A **port** is the bottom of the chain — it represents a physical (or logical) Ethernet interface on the switch (e.g., `Ethernet8` at 100G). At boot time, ports are Layer 2 (L2) objects: they can bridge traffic but cannot route IP packets. Port initialization is covered in the [previous document](17_ports_and_host_interfaces.md).
-
-A **router interface (RIF)** promotes a port to Layer 3 (L3). When an operator assigns an IP address to a port, SONiC creates a RIF on top of it, giving the port an identity in the IP forwarding engine. The RIF carries a source MAC address (typically the switch's base MAC) that the ASIC writes into every routed packet's L2 header on egress (see [Where the Source MAC Comes From](#where-the-source-mac-comes-from)).
-
-Each object must exist before the objects above it can be created. This bottom-up dependency is enforced by the [`m_orchList`](12_orchagent.md#the-main-select-loop) ordering — each module runs only after the modules it depends on:
-
-```
-SwitchOrch → PortsOrch → IntfsOrch → NeighOrch → NhgOrch → RouteOrch
-```
-
-This document covers the two modules above `PortsOrch` in the lower half of the chain: `IntfsOrch` (router interfaces) and `NeighOrch` (neighbors and next hops).
+To participate in IP routing, a port must be promoted to Layer 3. That is the job of the **router interface**.
 
 
 ## Router Interfaces (IntfsOrch)
 
-### The L2-to-L3 Transition
-
-Assigning an IP address to a port triggers the creation of a `SAI_OBJECT_TYPE_ROUTER_INTERFACE`. This SAI object connects the port to the IP forwarding engine — binding it to a virtual router (VRF), assigning it a source MAC for L2 header rewriting (see [Where the Source MAC Comes From](#where-the-source-mac-comes-from)), and enabling independent control of IPv4 and IPv6 routing.
+Assigning an IP address to a port triggers the creation of a `SAI_OBJECT_TYPE_ROUTER_INTERFACE` — the SAI object that promotes the port from L2 to L3. A RIF connects the port to the IP forwarding engine: it binds the port to a virtual router (VRF), assigns a source MAC address (typically the switch's base MAC) that the ASIC writes into every routed packet's L2 header on egress, and enables independent control of IPv4 and IPv6 routing.
 
 ### What Triggers RIF Creation
 
@@ -45,15 +19,55 @@ When an operator runs:
 config interface ip add Ethernet8 10.0.0.201/30
 ```
 
-This writes to CONFIG_DB's `INTERFACE` table. The `intfmgrd` manager daemon picks up the change, assigns the IP address in the Linux kernel, and writes the interface entry to APPL_DB's `INTF_TABLE`. `IntfsOrch` then creates the RIF in the ASIC:
+This writes **two entries** to CONFIG_DB's `INTERFACE` table — a general entry (`INTERFACE|Ethernet8`) and an address entry (`INTERFACE|Ethernet8|10.0.0.201/30`). From there, the configuration flows through four steps:
 
-```
-CONFIG_DB                         APPL_DB                        ASIC
-INTERFACE|Ethernet8|10.0.0.201/30   INTF_TABLE:Ethernet8
-                          ──►       → IntfsOrch creates RIF     ──►  SAI_OBJECT_TYPE_ROUTER_INTERFACE
- intfmgrd                                                              type: PORT
-                                                                       port_id: <port_oid>
-                                                                       vr_id: <default_vr_oid>
+1. **`intfmgrd` processes the general entry** — It reads `INTERFACE|Ethernet8` from CONFIG_DB, checks that the port is ready (via STATE_DB), applies interface-level settings (VRF, MAC, MPLS) to the Linux kernel, and writes `INTF_TABLE:Ethernet8` to APPL_DB.
+
+2. **`intfmgrd` processes the address entry** — It reads `INTERFACE|Ethernet8|10.0.0.201/30`, waits until the general entry from step 1 is complete (`isIntfCreated`), then runs `ip address add 10.0.0.201/30 dev Ethernet8` in the kernel and writes `INTF_TABLE:Ethernet8:10.0.0.201/30` to APPL_DB.
+
+3. **`IntfsOrch` creates the RIF** — It picks up `INTF_TABLE:Ethernet8` (no IP prefix in the key), calls `addRouterIntfs()`, and programs a `SAI_OBJECT_TYPE_ROUTER_INTERFACE` in the ASIC with the port OID, VRF, source MAC, and MTU.
+
+4. **`IntfsOrch` adds an IP-to-me route** — It picks up `INTF_TABLE:Ethernet8:10.0.0.201/30` (IP prefix in the key), calls `addIp2MeRoute()`, and programs a `/32` host route that directs packets addressed to `10.0.0.201` to the CPU for local processing.
+
+```mermaid
+sequenceDiagram
+    participant CLI as Operator (CLI)
+    participant CDB as CONFIG_DB
+    participant MGR as intfmgrd
+    participant KER as Linux Kernel
+    participant SDB as STATE_DB
+    participant ADB as APPL_DB
+    participant ORCH as IntfsOrch
+    participant SAI as SAI / ASIC
+
+    CLI->>CDB: SET INTERFACE|Ethernet8<br/>SET INTERFACE|Ethernet8|10.0.0.201/30
+
+    Note over CDB,MGR: Step 1 — General entry (interface-level)
+    CDB->>MGR: INTERFACE|Ethernet8 (SubscriberStateTable)
+    MGR->>SDB: check PORT_TABLE|Ethernet8 (port state ok?)
+    SDB-->>MGR: state: ok
+    MGR->>KER: set VRF, MAC, MPLS, admin state
+    MGR->>ADB: SET INTF_TABLE:Ethernet8
+    MGR->>SDB: SET INTERFACE|Ethernet8 (vrf: "")
+
+    Note over CDB,MGR: Step 2 — Address entry (IP-level)
+    CDB->>MGR: INTERFACE|Ethernet8|10.0.0.201/30 (SubscriberStateTable)
+    MGR->>SDB: check INTERFACE|Ethernet8 exists (isIntfCreated)
+    SDB-->>MGR: exists
+    MGR->>KER: ip address add 10.0.0.201/30 dev Ethernet8
+    MGR->>ADB: SET INTF_TABLE:Ethernet8:10.0.0.201/30<br/>(family: IPv4, scope: global)
+    MGR->>SDB: SET INTERFACE|Ethernet8:10.0.0.201/30<br/>(state: ok)
+
+    Note over ADB,ORCH: Step 3 — RIF creation
+    ADB->>ORCH: INTF_TABLE:Ethernet8 (no IP prefix)
+    ORCH->>ORCH: setIntf() → addRouterIntfs()
+    ORCH->>SAI: create_router_interface<br/>(type: PORT, port_id, vr_id, src_mac, mtu)
+    SAI-->>ORCH: rif_oid
+
+    Note over ADB,ORCH: Step 4 — IP-to-me route
+    ADB->>ORCH: INTF_TABLE:Ethernet8:10.0.0.201/30
+    ORCH->>ORCH: setIntf() → addIp2MeRoute()
+    ORCH->>SAI: create_route_entry<br/>(10.0.0.201/32 → CPU port)
 ```
 
 ### RIF Types
@@ -219,6 +233,35 @@ This matches the EEPROM — confirming the full path from hardware to software.
 Unless explicitly overridden at any level, **every RIF on the switch shares the same source MAC**. This is standard for IP routing: each hop is identified by its IP address, not its MAC, so a single shared MAC is sufficient.
 
 > [`syseepromd`](24_pmon_container.md#syseepromd--system-eeprom-daemon) also reads the EEPROM at boot and publishes the base MAC and other TLV fields (serial number, platform name, vendor) to the `EEPROM_INFO` table in STATE_DB — this path is for monitoring and CLI display (`show platform syseeprom`), not for programming the ASIC. For how `DEVICE_METADATA` is populated during first boot, see [Platform Configuration](25_platform_configuration.md).
+
+
+## From RIF to Route: The Full Object Chain
+
+With ports promoted to L3 by router interfaces, the switch can route IP packets. But a RIF alone is not enough — the ASIC also needs to know *where* to send packets and *what destination MAC* to write on egress. These answers come from additional SAI objects that chain together above the RIF.
+
+Consider the following topology. This switch has IP `10.0.0.201` on `Ethernet8`, connected to a neighbor at `10.0.0.202` via a point-to-point `/30` link. A remote network, `10.20.0.0/24`, is reachable through that neighbor — the switch learned this via a routing protocol:
+
+<img src="../pics/forwarding-topology.png" alt="Forwarding topology example" width="800">
+
+When a packet destined for `10.20.0.0/24` arrives at this switch, the switch does not need to know the full path to the destination. It only needs to know: **hand this packet to my neighbor `10.0.0.202` — they know how to get it there.** This is hop-by-hop IP routing: each router decides only the next step, not the entire journey.
+
+To make that single hop work, the ASIC needs to know three things: which **port** to send the packet out of, what **source MAC** to write (its own), and what **destination MAC** to write (the neighbor's). SONiC programs this information into the ASIC as a chain of SAI objects — each one references the next — plus a neighbor entry that provides the destination MAC:
+
+<img src="../pics/nh-flow.png" alt="SAI forwarding object chain" width="850">
+
+A **route entry** is the starting point of every forwarding decision. It maps a destination prefix (e.g., `10.20.0.0/24`) to a next-hop object, telling the ASIC "packets matching this prefix should be forwarded through this next hop." When a route has **multiple equal-cost paths**, the route entry points to a next-hop group instead of a single next hop — that is covered in [Load Balancing](22_load_balancing.md).
+
+A **next hop** is the forwarding target that the route entry points to. It combines the neighbor's IP address (`10.0.0.202`) with the RIF it is reachable through, giving the ASIC the information it needs to determine the egress port and look up the destination MAC from the neighbor entry. `NeighOrch` creates a next hop alongside every neighbor entry.
+
+A **neighbor entry** maps the neighbor's IP address to its MAC address, learned through ARP (IPv4) or NDP (IPv6). The IP is the **remote peer's** address and the ASIC looks it up by `{rif, neighbor_ip}` at egress to get the destination MAC for L2 header rewriting.
+
+Each object in this chain must exist before the objects above it can be created. This bottom-up dependency is enforced by the [`m_orchList`](12_orchagent.md#the-main-select-loop) ordering — each module runs only after the modules it depends on:
+
+```
+SwitchOrch → PortsOrch → IntfsOrch → NeighOrch → NhgOrch → RouteOrch
+```
+
+The rest of this document covers `NeighOrch` — the module that creates neighbor entries and next hops. Route entries and next-hop groups are covered in [Load Balancing](22_load_balancing.md).
 
 
 ## Neighbors and Next Hops (NeighOrch)

@@ -80,9 +80,11 @@ When SWSS starts:
 1. Depends on the database container (must be running first).
 2. The entrypoint script starts supervisord.
 3. supervisord starts all manager daemons, sync daemons, and orchagent.
-4. portsyncd reads the PORT table from CONFIG_DB and publishes it to APPL_DB.
-5. orchagent waits for portsyncd to signal that all ports are initialized.
+4. `portsyncd` reads the PORT table from CONFIG_DB and publishes it to APPL_DB.
+5. orchagent waits for `portsyncd` to signal that all ports are initialized.
 6. Once ports are ready, orchagent begins processing all other APPL_DB events.
+
+Steps 4–6 are covered in detail in [Ports and Host Interfaces](17_ports_and_host_interfaces.md).
 
 ## Summary
 

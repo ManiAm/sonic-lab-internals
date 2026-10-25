@@ -2,7 +2,7 @@
 
 > **Prerequisites**: [Orchagent Deep Dive](12_orchagent.md) — the select loop, `m_orchList` ordering, and `doTask()`. [The SAI Object Model](14_sai_object_model.md) — object IDs, entry keys, and the four operations.
 
-Before the switch can route IP packets, it must first initialize its physical ports and create the Linux network devices (**netdevs**) that let the CPU communicate with the ASIC. Three processes inside the SWSS container coordinate this work, starting in a strict order enforced by `supervisord`:
+Before the switch can do anything useful, it must first initialize its physical ports and create the Linux network devices (**netdevs**) that let the CPU communicate with the ASIC. Three processes inside the SWSS container coordinate this work, starting in a strict order enforced by `supervisord`:
 
 | Process                   | Supervisord Priority | Waits For           | Role                         |
 |---------------------------|----------------------|---------------------|------------------------------|
