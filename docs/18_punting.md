@@ -15,7 +15,7 @@ Every packet arriving at a switch port takes one of two paths:
 
 The slow path exists because certain packets **cannot** be handled in hardware. The ASIC has no BGP implementation, no ARP state machine, no LLDP agent. These protocols run as software daemons on the CPU, and the only way they can receive packets is if the ASIC forwards those packets to the CPU.
 
-<img src="../pics/switch-planes.png" alt="Switch planes — data plane forwards at line rate, control and management traffic are punted through CoPP to the CPU">
+<img src="../pics/switch-planes.png" alt="segment"  width="700">
 
 The diagram above shows the three traffic types flowing through a switch. **Data** traffic passes straight through the data plane (teal) from ingress to egress — the CPU never sees it. **Control** and **Management** traffic are redirected upward to the CPU (pink), passing through the **CoPP** policer (yellow) that rate-limits what reaches the control plane. This is the architectural boundary that the rest of this document explores in detail.
 

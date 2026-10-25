@@ -6,9 +6,9 @@ To forward a packet, the ASIC needs a chain of SAI objects — each one referenc
 
 <img src="../pics/nh-flow.png" alt="segment" width="850">
 
-A **port** is the starting point — it represents a physical (or logical) Ethernet interface on the switch (e.g., `Ethernet8` at 100G). At boot time, ports are Layer 2 objects: they can bridge traffic within a VLAN, but the ASIC will not route IP packets through them.
+A **port** is the starting point — it represents a physical (or logical) Ethernet interface on the switch (e.g., `Ethernet8` at 100G). At boot time, ports are Layer 2 (L2) objects: they can bridge traffic but cannot route IP packets.
 
-A **router interface (RIF)** is what turns a port into a Layer 3 participant. When an operator assigns an IP address to a port, SONiC creates a RIF on top of it. The RIF gives the port an identity in the IP forwarding engine — it carries a source MAC address that the ASIC writes into every routed packet's L2 header on egress.
+A **router interface (RIF)** promotes a port to Layer 3 (L3). When an operator assigns an IP address to a port, SONiC creates a RIF on top of it, giving the port an identity in the IP forwarding engine.
 
 A **neighbor entry** records the MAC address of a device one hop away, learned through ARP (IPv4) or NDP (IPv6). When the ASIC routes a packet toward a neighbor, it uses this MAC as the destination in the rewritten L2 header.
 
@@ -116,11 +116,11 @@ Because only punted packets reach the kernel, running `tcpdump -i Ethernet8` cap
 
 ### The L2-to-L3 Transition
 
-A port starts as a Layer 2 object — it can bridge traffic but the ASIC will not route through it. Creating a `SAI_OBJECT_TYPE_ROUTER_INTERFACE` on top of the port promotes it to Layer 3. The RIF connects the port to the IP forwarding engine: it carries a source MAC, belongs to a virtual router (VRF), and can have IPv4 and IPv6 routing enabled independently.
+Creating a `SAI_OBJECT_TYPE_ROUTER_INTERFACE` on top of an L2 port promotes it to L3. The RIF connects the port to the IP forwarding engine: it carries a source MAC address that the ASIC writes into every routed packet's L2 header on egress, belongs to a virtual router (VRF), and can have IPv4 and IPv6 routing enabled independently.
 
 ### What Triggers RIF Creation
 
-Assigning an IP address to an interface is what triggers the creation of a RIF. When an operator runs:
+When an operator runs:
 
 ```bash
 config interface ip add Ethernet8 10.0.0.201/31
@@ -306,7 +306,7 @@ Unless explicitly overridden at any level, **every RIF on the switch shares the 
 
 ### What a Neighbor Is
 
-A **neighbor** is a device directly reachable on a connected link — one IP hop away. The switch must know the neighbor's MAC address to construct the correct Layer 2 header when forwarding packets toward it. This IP-to-MAC binding is called an **adjacency**, and it is discovered at runtime:
+A **neighbor** is a device directly reachable on a connected link — one IP hop away. The IP-to-MAC binding that the switch needs for L2 header rewriting is called an **adjacency**, discovered at runtime:
 
 - **IPv4** — ARP (Address Resolution Protocol)
 - **IPv6** — NDP (Neighbor Discovery Protocol)
@@ -336,7 +336,7 @@ Kernel ARP table                     APPL_DB
 
 Why two objects? Because they serve different purposes in the ASIC:
 - The **neighbor entry** populates the ASIC's **adjacency table** — it answers "what MAC do I rewrite the packet with?"
-- The **next hop** is a **forwarding target** — it answers "where do I send packets?" and is what route entries and NHG members point to.
+- The **next hop** is a **forwarding target** — it answers "where do I send packets?" and is what route entries and next-hop group members point to.
 
 ### SAI Calls
 
@@ -363,7 +363,7 @@ nh_attrs[2].value.oid = rif_oid;                     /* same RIF */
 sai_next_hop_api->create_next_hop(&nh_oid, switch_id, 3, nh_attrs);
 ```
 
-The `nh_oid` returned by the second call is the forwarding target that the rest of the system references. For a single-path route, `RouteOrch` sets `SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID` directly to this OID. For multi-path ECMP routes, `RouteOrch` or `NhgOrch` creates a next-hop group member with `SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID` pointing to this OID — the member is the join object that attaches the next hop to the group (see the [next-hop group diagram](21_load_balancing.md)).
+The `nh_oid` returned by the second call is the forwarding target that the rest of the system references. For a single-path route, `RouteOrch` sets `SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID` directly to this OID. For multi-path Equal-Cost Multi-Path (ECMP) routes, `RouteOrch` or `NhgOrch` creates a next-hop group member with `SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID` pointing to this OID — the member is the join object that attaches the next hop to the group (see the [next-hop group diagram](21_load_balancing.md)).
 
 
 ## Putting It All Together
@@ -372,11 +372,11 @@ To see how the entire chain is built, consider a concrete scenario: an operator 
 
 **Step 1 — Port** (boot time, `PortsOrch`):
 
-The ASIC's physical port for `Ethernet8` is configured with speed, MTU, and admin state. A host interface is created so the CPU can send and receive control traffic on this port. At this point, the port is Layer 2 only.
+The ASIC's physical port for `Ethernet8` is configured with speed, MTU, and admin state. A host interface is created so the CPU can send and receive control traffic on this port. At this point, the port is L2 only.
 
 **Step 2 — Router Interface** (IP assignment, `IntfsOrch`):
 
-The operator runs `config interface ip add Ethernet8 10.0.0.201/31`. This triggers `intfmgrd` → APPL_DB → `IntfsOrch`, which creates a `SAI_OBJECT_TYPE_ROUTER_INTERFACE` of type `PORT` on the port's OID. The port is now Layer 3 — the ASIC will route IP packets through it.
+The operator runs `config interface ip add Ethernet8 10.0.0.201/31`. This triggers `intfmgrd` → APPL_DB → `IntfsOrch`, which creates a `SAI_OBJECT_TYPE_ROUTER_INTERFACE` of type `PORT` on the port's OID. The port is now L3 — the ASIC will route IP packets through it.
 
 **Step 3 — Neighbor + Next Hop** (ARP resolution, `NeighOrch`):
 
@@ -420,7 +420,7 @@ When a packet destined for `10.20.0.0/24` arrives at the switch, the ASIC:
 | Neighbor Entry | `NeighOrch` | ARP/NDP learned or static config | RIF, IP address, destination MAC |
 | Next Hop | `NeighOrch` | Same as neighbor | Type (IP), IP address, RIF |
 
-The dependency chain flows strictly downward: removing a port requires first removing its RIF, which requires first removing all neighbors on it, which requires first removing all next hops (and by extension, all NHG members and routes that reference them). This bottom-up creation and top-down teardown order is fundamental to SAI programming.
+The dependency chain flows strictly downward: removing a port requires first removing its RIF, which requires first removing all neighbors on it, which requires first removing all next hops (and by extension, all next-hop group members and routes that reference them). This bottom-up creation and top-down teardown order is fundamental to SAI programming.
 
 ---
 
