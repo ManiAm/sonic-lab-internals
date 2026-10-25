@@ -2,11 +2,11 @@
 
 > **Prerequisites**: [Orchagent Deep Dive](12_orchagent.md) — the select loop, `m_orchList` ordering, and `doTask()`. [The SAI Object Model](14_sai_object_model.md) — object IDs, entry keys, and the four operations.
 
-Before the ASIC can forward any packet, the control plane must program a chain of SAI objects into it. These objects are created once — when a port is configured, an IP address is assigned, or a neighbor is learned — and then the ASIC uses them to forward every matching packet at line rate without further software involvement. Each object in the chain references the next one to its right:
+To forward a packet, the ASIC needs a chain of SAI objects — each one references the next:
 
 <img src="../pics/nh-flow.png" alt="segment" width="850">
 
-A **port** is the starting point — it represents a physical (or logical) Ethernet interface on the switch (e.g., `Ethernet0` at 100G). At boot time, ports are Layer 2 objects: they can bridge traffic within a VLAN, but the ASIC will not route IP packets through them.
+A **port** is the starting point — it represents a physical (or logical) Ethernet interface on the switch (e.g., `Ethernet8` at 100G). At boot time, ports are Layer 2 objects: they can bridge traffic within a VLAN, but the ASIC will not route IP packets through them.
 
 A **router interface (RIF)** is what turns a port into a Layer 3 participant. When an operator assigns an IP address to a port, SONiC creates a RIF on top of it. The RIF gives the port an identity in the IP forwarding engine — it carries a source MAC address that the ASIC writes into every routed packet's L2 header on egress.
 
@@ -14,7 +14,7 @@ A **neighbor entry** records the MAC address of a device one hop away, learned t
 
 A **next hop** is the forwarding target that route entries point to. It combines a neighbor's IP address with the RIF it is reachable through, giving the ASIC everything it needs to forward and rewrite in a single lookup. `NeighOrch` creates a next hop alongside every neighbor entry.
 
-A **route entry** ties it all together: it maps a destination prefix (e.g., `10.1.0.0/24`) to a next-hop object, telling the ASIC "packets matching this prefix should be forwarded through this next hop." When a route has **multiple equal-cost paths**, the route entry points to a next-hop group instead of a single next hop — that is covered in [Load Balancing](20_load_balancing.md) and [SAI Next-Hop Group Types](21_nhg_types.md).
+A **route entry** ties it all together: it maps a destination prefix (e.g., `10.20.0.0/24`) to a next-hop object, telling the ASIC "packets matching this prefix should be forwarded through this next hop." When a route has **multiple equal-cost paths**, the route entry points to a next-hop group instead of a single next hop — that is covered in [Load Balancing](20_load_balancing.md) and [SAI Next-Hop Group Types](21_nhg_types.md).
 
 Each object must exist before the objects above it can be created. This bottom-up dependency is enforced by the [`m_orchList`](12_orchagent.md#the-main-select-loop) ordering — each module runs only after the modules it depends on:
 
@@ -55,7 +55,7 @@ Port configuration flows through a multi-stage pipeline before reaching the ASIC
 
 ```
 CONFIG_DB                    APPL_DB                      ASIC
-PORT|Ethernet0               PORT_TABLE:Ethernet0
+PORT|Ethernet8               PORT_TABLE:Ethernet8
   speed: 100000     ──►        speed: 100000      ──►    SAI port configured
   mtu: 9100        portmgrd    mtu: 9100          PortsOrch  (admin_state, speed,
   admin_status: up  portsyncd  admin_status: up              mtu, fec, lanes)
@@ -89,11 +89,11 @@ hostif_attrs[0].value.s32 = SAI_HOSTIF_TYPE_NETDEV;
 hostif_attrs[1].id        = SAI_HOSTIF_ATTR_OBJ_ID;
 hostif_attrs[1].value.oid = port_oid;             /* link to the SAI port */
 hostif_attrs[2].id        = SAI_HOSTIF_ATTR_NAME;
-strncpy(hostif_attrs[2].value.chardata, "Ethernet0", SAI_HOSTIF_NAME_SIZE);
+strncpy(hostif_attrs[2].value.chardata, "Ethernet8", SAI_HOSTIF_NAME_SIZE);
 sai_hostif_api->create_hostif(&hostif_oid, switch_id, 3, hostif_attrs);
 ```
 
-After this call, a Linux netdev named `Ethernet0` appears in the kernel. Packets arriving on the physical port that are destined for the CPU (control-plane traffic) are delivered through this netdev, and packets the CPU sends out through `Ethernet0` are transmitted on the physical port.
+After this call, a Linux netdev named `Ethernet8` appears in the kernel. Packets arriving on the physical port that are destined for the CPU (control-plane traffic) are delivered through this netdev, and packets the CPU sends out through `Ethernet8` are transmitted on the physical port.
 
 
 ## Router Interfaces (IntfsOrch)
@@ -107,14 +107,14 @@ A port starts as a Layer 2 object — it can bridge traffic but the ASIC will no
 Assigning an IP address to an interface is what triggers the creation of a RIF. When an operator runs:
 
 ```bash
-config interface ip add Ethernet0 10.0.0.1/31
+config interface ip add Ethernet8 10.0.0.201/31
 ```
 
 This writes to CONFIG_DB's `INTERFACE` table. The `intfmgrd` manager daemon picks up the change, assigns the IP address in the Linux kernel, and writes the interface entry to APPL_DB's `INTF_TABLE`. `IntfsOrch` then creates the RIF in the ASIC:
 
 ```
 CONFIG_DB                         APPL_DB                        ASIC
-INTERFACE|Ethernet0|10.0.0.1/31   INTF_TABLE:Ethernet0
+INTERFACE|Ethernet8|10.0.0.201/31   INTF_TABLE:Ethernet8
                           ──►       → IntfsOrch creates RIF     ──►  SAI_OBJECT_TYPE_ROUTER_INTERFACE
  intfmgrd                                                              type: PORT
                                                                        port_id: <port_oid>
@@ -208,9 +208,9 @@ Neighbors reach `NeighOrch` through two paths:
 
 ```
 Kernel ARP table                     APPL_DB
-10.0.0.2 → aa:bb:cc:dd:ee:ff        NEIGH_TABLE:Ethernet0:10.0.0.2
+10.0.0.200 → bb:cc:dd:ee:ff:01        NEIGH_TABLE:Ethernet8:10.0.0.200
   (learned via ARP)      ──►           family: IPv4
-                        neighsyncd     neigh: aa:bb:cc:dd:ee:ff
+                        neighsyncd     neigh: bb:cc:dd:ee:ff:01
 ```
 
 **Static neighbors** — An operator configures a fixed neighbor entry in CONFIG_DB's `NEIGH` table. The `nbrmgrd` manager daemon processes it and writes it to APPL_DB's `NEIGH_TABLE`, following the same path as dynamic entries from that point on.
@@ -233,12 +233,12 @@ Why two objects? Because they serve different purposes in the ASIC:
 /* 1. Create the neighbor entry — programs the adjacency table */
 sai_neighbor_entry_t nbr_entry;
 nbr_entry.switch_id        = switch_id;
-nbr_entry.rif_id           = rif_oid;               /* the RIF on Ethernet0 */
-nbr_entry.ip_address       = sai_ip(10.0.0.2);      /* neighbor IP */
+nbr_entry.rif_id           = rif_oid;               /* the RIF on Ethernet8 */
+nbr_entry.ip_address       = sai_ip(10.0.0.200);      /* neighbor IP */
 
 sai_attribute_t nbr_attr;
 nbr_attr.id                = SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS;
-memcpy(nbr_attr.value.mac, "aa:bb:cc:dd:ee:ff", 6); /* learned via ARP */
+memcpy(nbr_attr.value.mac, "bb:cc:dd:ee:ff:01", 6); /* learned via ARP */
 sai_neighbor_api->create_neighbor_entry(&nbr_entry, 1, &nbr_attr);
 
 /* 2. Create the next hop — a target that routes can point to */
@@ -246,7 +246,7 @@ sai_attribute_t nh_attrs[3];
 nh_attrs[0].id        = SAI_NEXT_HOP_ATTR_TYPE;
 nh_attrs[0].value.s32 = SAI_NEXT_HOP_TYPE_IP;
 nh_attrs[1].id        = SAI_NEXT_HOP_ATTR_IP;
-nh_attrs[1].value.ipaddr = sai_ip(10.0.0.2);        /* same neighbor IP */
+nh_attrs[1].value.ipaddr = sai_ip(10.0.0.200);        /* same neighbor IP */
 nh_attrs[2].id        = SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID;
 nh_attrs[2].value.oid = rif_oid;                     /* same RIF */
 sai_next_hop_api->create_next_hop(&nh_oid, switch_id, 3, nh_attrs);
@@ -257,29 +257,29 @@ The `nh_oid` returned by the second call is the forwarding target that the rest 
 
 ## Putting It All Together
 
-To see how the entire chain is built, consider a concrete scenario: an operator configures `Ethernet0` with IP `10.0.0.1/31`, the switch learns neighbor `10.0.0.2` via ARP, and BGP advertises a route to `10.1.0.0/24` via `10.0.0.2`.
+To see how the entire chain is built, consider a concrete scenario: an operator configures `Ethernet8` with IP `10.0.0.201/31`, the switch learns neighbor `10.0.0.200` via ARP, and BGP advertises a route to `10.20.0.0/24` via `10.0.0.200`.
 
 **Step 1 — Port** (boot time, `PortsOrch`):
 
-The ASIC's physical port for `Ethernet0` is configured with speed, MTU, and admin state. A host interface is created so the CPU can send and receive control traffic on this port. At this point, the port is Layer 2 only.
+The ASIC's physical port for `Ethernet8` is configured with speed, MTU, and admin state. A host interface is created so the CPU can send and receive control traffic on this port. At this point, the port is Layer 2 only.
 
 **Step 2 — Router Interface** (IP assignment, `IntfsOrch`):
 
-The operator runs `config interface ip add Ethernet0 10.0.0.1/31`. This triggers `intfmgrd` → APPL_DB → `IntfsOrch`, which creates a `SAI_OBJECT_TYPE_ROUTER_INTERFACE` of type `PORT` on the port's OID. The port is now Layer 3 — the ASIC will route IP packets through it.
+The operator runs `config interface ip add Ethernet8 10.0.0.201/31`. This triggers `intfmgrd` → APPL_DB → `IntfsOrch`, which creates a `SAI_OBJECT_TYPE_ROUTER_INTERFACE` of type `PORT` on the port's OID. The port is now Layer 3 — the ASIC will route IP packets through it.
 
 **Step 3 — Neighbor + Next Hop** (ARP resolution, `NeighOrch`):
 
-The kernel sends an ARP request for `10.0.0.2` and receives a reply with MAC `aa:bb:cc:dd:ee:ff`. `neighsyncd` writes this to APPL_DB. `NeighOrch` creates a `SAI_OBJECT_TYPE_NEIGHBOR_ENTRY` (for MAC rewriting) and a `SAI_OBJECT_TYPE_NEXT_HOP` (as a forwarding target).
+The kernel sends an ARP request for `10.0.0.200` and receives a reply with MAC `bb:cc:dd:ee:ff:01`. `neighsyncd` writes this to APPL_DB. `NeighOrch` creates a `SAI_OBJECT_TYPE_NEIGHBOR_ENTRY` (for MAC rewriting) and a `SAI_OBJECT_TYPE_NEXT_HOP` (as a forwarding target).
 
 **Step 4 — Route** (BGP update, `RouteOrch`):
 
-FRR receives a BGP update for `10.1.0.0/24` via `10.0.0.2`. `fpmsyncd` writes it to APPL_DB. `RouteOrch` looks up the next-hop OID for `10.0.0.2` (created in step 3) and creates a `SAI_OBJECT_TYPE_ROUTE_ENTRY` pointing to it.
+FRR receives a BGP update for `10.20.0.0/24` via `10.0.0.200`. `fpmsyncd` writes it to APPL_DB. `RouteOrch` looks up the next-hop OID for `10.0.0.200` (created in step 3) and creates a `SAI_OBJECT_TYPE_ROUTE_ENTRY` pointing to it.
 
 The resulting SAI object chain in the ASIC:
 
 ```
-SAI_ROUTE_ENTRY { dest: 10.1.0.0/24 }
-    NEXT_HOP_ID ──► SAI_NEXT_HOP { ip: 10.0.0.2, rif: rif_oid }
+SAI_ROUTE_ENTRY { dest: 10.20.0.0/24 }
+    NEXT_HOP_ID ──► SAI_NEXT_HOP { ip: 10.0.0.200, rif: rif_oid }
                                           │
                          ┌────────────────┘
                          ▼
@@ -288,15 +288,15 @@ SAI_ROUTE_ENTRY { dest: 10.1.0.0/24 }
                          ▼
                SAI_PORT { speed: 100G, admin: up }
 
-SAI_NEIGHBOR_ENTRY { rif: rif_oid, ip: 10.0.0.2 }
-    DST_MAC ──► aa:bb:cc:dd:ee:ff   (used to rewrite L2 header on egress)
+SAI_NEIGHBOR_ENTRY { rif: rif_oid, ip: 10.0.0.200 }
+    DST_MAC ──► bb:cc:dd:ee:ff:01   (used to rewrite L2 header on egress)
 ```
 
-When a packet destined for `10.1.0.0/24` arrives at the switch, the ASIC:
+When a packet destined for `10.20.0.0/24` arrives at the switch, the ASIC:
 1. Matches the destination IP against the route entry → finds the next-hop OID.
 2. Follows the next hop to the RIF → determines the egress port.
-3. Looks up the neighbor entry for `10.0.0.2` on that RIF → gets the destination MAC.
-4. Rewrites the L2 header (source MAC from the RIF, destination MAC from the neighbor), decrements the TTL, and sends the packet out `Ethernet0`.
+3. Looks up the neighbor entry for `10.0.0.200` on that RIF → gets the destination MAC.
+4. Rewrites the L2 header (source MAC from the RIF, destination MAC from the neighbor), decrements the TTL, and sends the packet out `Ethernet8`.
 
 
 ## Summary
