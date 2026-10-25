@@ -18,9 +18,9 @@ A **next hop** is the forwarding target that the route entry points to. It combi
 
 A **neighbor entry** maps the neighbor's IP address to its MAC address, learned through ARP (IPv4) or NDP (IPv6). The IP is the **remote peer's** address and the ASIC looks it up by `{rif, neighbor_ip}` at egress to get the destination MAC for L2 header rewriting.
 
-A **router interface (RIF)** promotes a port to Layer 3 (L3). When an operator assigns an IP address to a port, SONiC creates a RIF on top of it, giving the port an identity in the IP forwarding engine. The RIF carries a source MAC address (typically the switch's base MAC) that the ASIC writes into every routed packet's L2 header on egress (see [Where the Source MAC Comes From](#where-the-source-mac-comes-from)).
-
 A **port** is the bottom of the chain — it represents a physical (or logical) Ethernet interface on the switch (e.g., `Ethernet8` at 100G). At boot time, ports are Layer 2 (L2) objects: they can bridge traffic but cannot route IP packets. Port initialization is covered in the [previous document](17_ports_and_host_interfaces.md).
+
+A **router interface (RIF)** promotes a port to Layer 3 (L3). When an operator assigns an IP address to a port, SONiC creates a RIF on top of it, giving the port an identity in the IP forwarding engine. The RIF carries a source MAC address (typically the switch's base MAC) that the ASIC writes into every routed packet's L2 header on egress (see [Where the Source MAC Comes From](#where-the-source-mac-comes-from)).
 
 Each object must exist before the objects above it can be created. This bottom-up dependency is enforced by the [`m_orchList`](12_orchagent.md#the-main-select-loop) ordering — each module runs only after the modules it depends on:
 
