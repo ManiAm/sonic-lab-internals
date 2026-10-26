@@ -30,6 +30,7 @@ This writes **two entries** to CONFIG_DB's `INTERFACE` table — a general entry
 4. **`IntfsOrch` adds an IP-to-me route** — It picks up `INTF_TABLE:Ethernet8:10.0.0.201/30` (IP prefix in the key), calls `addIp2MeRoute()`, and programs a `/32` host route that directs packets addressed to `10.0.0.201` to the CPU for local processing.
 
 ```mermaid
+%%{init: {'sequence': {'mirrorActors': false}}}%%
 sequenceDiagram
     participant CLI as Operator (CLI)
     participant CDB as CONFIG_DB
@@ -74,12 +75,11 @@ sequenceDiagram
 
 `IntfsOrch` creates RIFs using the following SAI types, depending on the underlying interface:
 
-| SAI RIF Type | Underlying Object | When It Is Used |
+| SAI RIF Type | `PORT_ID` / `VLAN_ID` | When It Is Used |
 |---|---|---|
-| `PORT` | A physical port OID | IP address assigned to a physical interface (e.g., `Ethernet0`). |
-| `PORT` | A LAG OID | IP address assigned to a LAG (Link Aggregation Group) interface (e.g., `PortChannel1`). SAI uses the same `PORT` type — the `PORT_ID` attribute simply points to the LAG OID instead of a physical port OID. |
+| `PORT` | A physical port OID or LAG OID | IP address assigned to a physical interface (e.g., `Ethernet0`) or a LAG (e.g., `PortChannel1`). SAI uses the same type for both — the `PORT_ID` attribute simply points to whichever OID represents the interface. |
 | `VLAN` | A VLAN OID | IP address assigned to a VLAN interface (e.g., `Vlan100`). The RIF enables routing between the VLAN and other L3 domains. |
-| `SUB_PORT` | A port OID + VLAN tag | A sub-interface (e.g., `Ethernet0.100`). Isolates traffic by VLAN tag on a single physical port. |
+| `SUB_PORT` | A port OID + outer VLAN tag | A sub-interface (e.g., `Ethernet0.100`). Isolates traffic by VLAN tag on a single physical port. |
 
 > **Loopback interfaces** (e.g., `Loopback0`) are handled differently. `IntfsOrch` does **not** create a SAI RIF for them — it only tracks them in software and adds IP-to-me routes (local routes that direct packets addressed to the switch's own IP to the CPU). The `SAI_ROUTER_INTERFACE_TYPE_LOOPBACK` type exists in SAI but is used only by tunnel modules (`tunneldecaporch`, `srv6orch`, `muxorch`) for overlay interfaces, not for `Loopback0`.
 
@@ -126,13 +126,18 @@ For a port-type RIF, the two mandatory attributes (`VIRTUAL_ROUTER_ID`, `TYPE`) 
 
 ```c
 sai_attribute_t rif_attrs[4];
+
 rif_attrs[0].id        = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
 rif_attrs[0].value.oid = default_vr_oid;           /* mandatory: the VRF */
+
 rif_attrs[1].id        = SAI_ROUTER_INTERFACE_ATTR_TYPE;
 rif_attrs[1].value.s32 = SAI_ROUTER_INTERFACE_TYPE_PORT;  /* mandatory: RIF type */
+
 rif_attrs[2].id        = SAI_ROUTER_INTERFACE_ATTR_PORT_ID;
 rif_attrs[2].value.oid = port_oid;                 /* conditional: required for PORT type */
+
 rif_attrs[3].id        = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
+
 memcpy(rif_attrs[3].value.mac, switch_mac, 6);     /* optional: defaults to VR's MAC */
 sai_router_intfc_api->create_router_interface(&rif_oid, switch_id, 4, rif_attrs);
 ```
@@ -237,13 +242,13 @@ Unless explicitly overridden at any level, **every RIF on the switch shares the 
 
 ## From RIF to Route: The Full Object Chain
 
-With ports promoted to L3 by router interfaces, the switch can route IP packets. But a RIF alone is not enough — the ASIC also needs to know *where* to send packets and *what destination MAC* to write on egress. These answers come from additional SAI objects that chain together above the RIF.
+With ports promoted to L3 by router interfaces, the switch can route IP packets. But a RIF alone is not enough — the ASIC also needs to know *where* to send packets and *what destination MAC* to write on egress. These come from additional SAI objects that chain together above the RIF.
 
-Consider the following topology. This switch has IP `10.0.0.201` on `Ethernet8`, connected to a neighbor at `10.0.0.202` via a point-to-point `/30` link. A remote network, `10.20.0.0/24`, is reachable through that neighbor — the switch learned this via a routing protocol:
+Consider the following topology. The local switch has IP `10.0.0.201` on `Ethernet8`, connected to a neighbor at `10.0.0.202` via a point-to-point `/30` link. A remote network, `10.20.0.0/24`, is reachable through that neighbor — learned via a routing protocol:
 
 <img src="../pics/forwarding-topology.png" alt="Forwarding topology example" width="800">
 
-When a packet destined for `10.20.0.0/24` arrives at this switch, the switch does not need to know the full path to the destination. It only needs to know: **hand this packet to my neighbor `10.0.0.202` — they know how to get it there.** This is hop-by-hop IP routing: each router decides only the next step, not the entire journey.
+When a packet destined for `10.20.0.0/24` arrives at the local switch, it does not need to know the full path to the destination. It only needs to know: **hand this packet to my neighbor `10.0.0.202` — they know how to get it there.** This is hop-by-hop IP routing: each router decides only the next step, not the entire journey.
 
 To make that single hop work, the ASIC needs to know three things: which **port** to send the packet out of, what **source MAC** to write (its own), and what **destination MAC** to write (the neighbor's). SONiC programs this information into the ASIC as a chain of SAI objects — each one references the next — plus a neighbor entry that provides the destination MAC:
 
@@ -251,17 +256,9 @@ To make that single hop work, the ASIC needs to know three things: which **port*
 
 A **route entry** is the starting point of every forwarding decision. It maps a destination prefix (e.g., `10.20.0.0/24`) to a next-hop object, telling the ASIC "packets matching this prefix should be forwarded through this next hop." When a route has **multiple equal-cost paths**, the route entry points to a next-hop group instead of a single next hop — that is covered in [Load Balancing](22_load_balancing.md).
 
-A **next hop** is the forwarding target that the route entry points to. It combines the neighbor's IP address (`10.0.0.202`) with the RIF it is reachable through, giving the ASIC the information it needs to determine the egress port and look up the destination MAC from the neighbor entry. `NeighOrch` creates a next hop alongside every neighbor entry.
+A **next hop** is the forwarding target that the route entry points to. It combines the neighbor's IP address (`10.0.0.202`) with the RIF it is reachable through, giving the ASIC the information it needs to determine the egress port and look up the destination MAC from the neighbor entry. [NeighOrch](#neighbors-and-next-hops-neighorch) creates a next hop alongside every neighbor entry.
 
 A **neighbor entry** maps the neighbor's IP address to its MAC address, learned through ARP (IPv4) or NDP (IPv6). The IP is the **remote peer's** address and the ASIC looks it up by `{rif, neighbor_ip}` at egress to get the destination MAC for L2 header rewriting.
-
-Each object in this chain must exist before the objects above it can be created. This bottom-up dependency is enforced by the [`m_orchList`](12_orchagent.md#the-main-select-loop) ordering — each module runs only after the modules it depends on:
-
-```
-SwitchOrch → PortsOrch → IntfsOrch → NeighOrch → NhgOrch → RouteOrch
-```
-
-The rest of this document covers `NeighOrch` — the module that creates neighbor entries and next hops. Route entries and next-hop groups are covered in [Load Balancing](22_load_balancing.md).
 
 
 ## Neighbors and Next Hops (NeighOrch)
@@ -275,18 +272,26 @@ A **neighbor** is a device directly reachable on a connected link — one IP hop
 
 ### How Neighbors Are Learned
 
-Neighbors reach `NeighOrch` through two paths:
+Neighbors reach `NeighOrch` through two paths, but both converge at APPL_DB:
 
-**Dynamic neighbors** (the common case) — The Linux kernel learns a neighbor through ARP or NDP. The `neighsyncd` sync daemon (in the SWSS container) listens for kernel neighbor netlink events and writes each learned neighbor to APPL_DB:
+**Dynamic neighbors** (the common case) — The Linux kernel learns a neighbor's MAC address through ARP or NDP. The `neighsyncd` sync daemon registers for `RTM_NEWNEIGH` and `RTM_DELNEIGH` netlink events, parses the interface name, IP, and MAC from each event, and writes the result to APPL_DB.
 
+**Static neighbors** — An operator configures a fixed neighbor entry in CONFIG_DB's `NEIGH` table. The `nbrmgrd` manager daemon sends a `RTM_NEWNEIGH` netlink message to the kernel (with `NUD_PERMANENT` state), which installs the entry in the kernel's neighbor table. The kernel then emits a netlink event that `neighsyncd` picks up — so static neighbors follow the same `neighsyncd` → APPL_DB path as dynamic ones.
+
+```mermaid
+%%{init: {'sequence': {'mirrorActors': false}}}%%
+sequenceDiagram
+    participant KER as Linux Kernel
+    participant NS as neighsyncd
+    participant ADB as APPL_DB
+
+    Note over KER,NS: ARP/NDP resolution (dynamic)
+    KER->>NS: RTM_NEWNEIGH netlink event<br/>(Ethernet8, 10.0.0.202, bb:cc:dd:ee:ff:01)
+    NS->>NS: onMsg() — parse interface, IP, MAC, NUD state
+    NS->>ADB: SET NEIGH_TABLE:Ethernet8:10.0.0.202<br/>(family: IPv4, neigh: bb:cc:dd:ee:ff:01)
 ```
-Kernel ARP table                     APPL_DB
-10.0.0.202 → bb:cc:dd:ee:ff:01        NEIGH_TABLE:Ethernet8:10.0.0.202
-  (learned via ARP)      ──►           family: IPv4
-                        neighsyncd     neigh: bb:cc:dd:ee:ff:01
-```
 
-**Static neighbors** — An operator configures a fixed neighbor entry in CONFIG_DB's `NEIGH` table. The `nbrmgrd` manager daemon processes it and writes it to APPL_DB's `NEIGH_TABLE`, following the same path as dynamic entries from that point on.
+From APPL_DB onward, `NeighOrch` processes both types identically.
 
 ### SAI Objects: Neighbor Entry and Next Hop
 
@@ -298,7 +303,22 @@ Kernel ARP table                     APPL_DB
 
 Why two objects? Because they serve different purposes in the ASIC:
 - The **neighbor entry** populates the ASIC's **adjacency table** — it answers "what MAC do I rewrite the packet with?"
-- The **next hop** is a **forwarding target** — it answers "where do I send packets?" and is what route entries and next-hop group members point to.
+- The **next hop** is a **forwarding target** — it answers "where do I send packets?" and is what routes point to.
+
+```mermaid
+%%{init: {'sequence': {'mirrorActors': false}}}%%
+sequenceDiagram
+    participant ADB as APPL_DB
+    participant ORCH as NeighOrch
+    participant SAI as SAI / ASIC
+
+    ADB->>ORCH: NEIGH_TABLE:Ethernet8:10.0.0.202
+    ORCH->>ORCH: doTask() — verify port has RIF (m_rif_id)
+    ORCH->>SAI: create_neighbor_entry<br/>(rif_id, ip: 10.0.0.202, dst_mac: bb:cc:dd:ee:ff:01)
+    Note over ORCH,SAI: addNeighbor() then calls addNextHop()
+    ORCH->>SAI: create_next_hop<br/>(type: IP, ip: 10.0.0.202, rif_id)
+    SAI-->>ORCH: nh_oid
+```
 
 ### SAI Calls
 
@@ -330,7 +350,7 @@ The `nh_oid` returned by the second call is the forwarding target that the rest 
 
 ## Putting It All Together
 
-To see how the entire chain is built, consider a concrete scenario: an operator configures `Ethernet8` with IP `10.0.0.201/30`, the switch learns neighbor `10.0.0.202` via ARP, and BGP advertises a route to `10.20.0.0/24` via `10.0.0.202`.
+To see how the entire chain is built, consider a concrete scenario: an operator configures `Ethernet8` with IP `10.0.0.201/30`, the local switch learns neighbor `10.0.0.202` via ARP, and BGP advertises a route to `10.20.0.0/24` via `10.0.0.202`.
 
 **Step 1 — Port** (boot time, `PortsOrch`):
 
@@ -365,7 +385,7 @@ SAI_NEIGHBOR_ENTRY { rif: rif_oid, ip: 10.0.0.202 }
     DST_MAC ──► bb:cc:dd:ee:ff:01   (used to rewrite L2 header on egress)
 ```
 
-When a packet destined for `10.20.0.0/24` arrives at the switch, the ASIC:
+When a packet destined for `10.20.0.0/24` arrives at the local switch, the ASIC:
 1. Matches the destination IP against the route entry → finds the next-hop OID.
 2. Follows the next hop to the RIF → determines the egress port.
 3. Looks up the neighbor entry for `10.0.0.202` on that RIF → gets the destination MAC.

@@ -170,20 +170,6 @@ User-space daemon (e.g., bgpd listening on TCP/179)
 
 The reverse direction — CPU to wire — is simpler. When a daemon sends a packet (for example, a BGP UPDATE), it writes to a socket. The kernel routes the packet to the appropriate host interface, and SAI transmits it on the physical port. No trap rules are involved in the egress direction.
 
-
-## Summary
-
-| Concept | What it does |
-|---|---|
-| **Fast path** | ASIC forwards packets in hardware at line rate — CPU never sees them |
-| **Slow path** | ASIC punts packets to the CPU through host interfaces for software processing |
-| **Trap** | SAI object that matches a packet type and assigns a punt action |
-| **Trap group** | Bundles traps with a shared CPU queue and rate-limiting policer |
-| **CoPP** | The policy framework that configures trap groups, rates, and priorities |
-| **Policer** | Enforces a maximum punt rate — excess packets are dropped before reaching the CPU |
-| **`coppmgrd`** | Manager daemon that reads CoPP config from CONFIG_DB |
-| **`CoppOrch`** | Orchagent module that programs trap groups and traps into SAI |
-
 ---
 
 **Previous**: [← The Forwarding Chain](18_forwarding_chain.md) · **Next**: [The BGP Container and FRR →](20_bgp_container.md)
