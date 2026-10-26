@@ -1,6 +1,6 @@
 # Flex Counter Groups — SAI Stat Reference
 
-> This is a companion reference to [Flex Counters](15_flex_counters.md). It lists every SAI stat ID that SONiC polls for each counter group.
+> This is a companion reference to [Flex Counters](16_flex_counters.md). It lists every SAI stat ID that SONiC polls for each counter group.
 
 
 ## PORT_STAT
@@ -320,4 +320,4 @@ Default interval: **10 s**.
 
 ---
 
-**Previous**: [← Flex Counters](15_flex_counters.md) · **Next**: [Ports and Host Interfaces →](17_ports_and_host_interfaces.md)
+**Previous**: [← Flex Counters](16_flex_counters.md) · **Next**: [Ports and Host Interfaces →](18_ports_and_host_interfaces.md)

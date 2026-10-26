@@ -1,8 +1,8 @@
 # The Forwarding Chain
 
-> **Prerequisites**: [Ports and Host Interfaces](17_ports_and_host_interfaces.md) — port initialization, host interfaces, and the data-plane vs control-plane distinction. [The SAI Object Model](14_sai_object_model.md) — object IDs, entry keys, and the four operations.
+> **Prerequisites**: [Ports and Host Interfaces](18_ports_and_host_interfaces.md) — port initialization, host interfaces, and the data-plane vs control-plane distinction. [The SAI Object Model](15_sai_object_model.md) — object IDs, entry keys, and the four operations.
 
-A **port** is the bottom of the forwarding chain — it represents a physical (or logical) Ethernet interface on the switch (e.g., `Ethernet8` at 100G). At boot time, ports are Layer 2 (L2) objects: they can bridge traffic but cannot route IP packets. Port initialization — how `PortsOrch` creates SAI port objects and host interfaces — is covered in the [previous document](17_ports_and_host_interfaces.md).
+A **port** is the bottom of the forwarding chain — it represents a physical (or logical) Ethernet interface on the switch (e.g., `Ethernet8` at 100G). At boot time, ports are Layer 2 (L2) objects: they can bridge traffic but cannot route IP packets. Port initialization — how `PortsOrch` creates SAI port objects and host interfaces — is covered in the [previous document](18_ports_and_host_interfaces.md).
 
 To participate in IP routing, a port must be promoted to Layer 3. That is the job of the **router interface**.
 
@@ -237,7 +237,7 @@ This matches the EEPROM — confirming the full path from hardware to software.
 
 Unless explicitly overridden at any level, **every RIF on the switch shares the same source MAC**. This is standard for IP routing: each hop is identified by its IP address, not its MAC, so a single shared MAC is sufficient.
 
-> [`syseepromd`](24_pmon_container.md#syseepromd--system-eeprom-daemon) also reads the EEPROM at boot and publishes the base MAC and other TLV fields (serial number, platform name, vendor) to the `EEPROM_INFO` table in STATE_DB — this path is for monitoring and CLI display (`show platform syseeprom`), not for programming the ASIC. For how `DEVICE_METADATA` is populated during first boot, see [Platform Configuration](25_platform_configuration.md).
+> [`syseepromd`](25_pmon_container.md#syseepromd--system-eeprom-daemon) also reads the EEPROM at boot and publishes the base MAC and other TLV fields (serial number, platform name, vendor) to the `EEPROM_INFO` table in STATE_DB — this path is for monitoring and CLI display (`show platform syseeprom`), not for programming the ASIC. For how `DEVICE_METADATA` is populated during first boot, see [Platform Configuration](26_platform_configuration.md).
 
 
 ## From RIF to Route: The Full Object Chain
@@ -254,7 +254,7 @@ To make that single hop work, the ASIC needs to know three things: which **port*
 
 <img src="../pics/nh-flow.png" alt="SAI forwarding object chain" width="850">
 
-A **route entry** is the starting point of every forwarding decision. It maps a destination prefix (e.g., `10.20.0.0/24`) to a next-hop object, telling the ASIC "packets matching this prefix should be forwarded through this next hop." When a route has **multiple equal-cost paths**, the route entry points to a next-hop group instead of a single next hop — that is covered in [Load Balancing](22_load_balancing.md).
+A **route entry** is the starting point of every forwarding decision. It maps a destination prefix (e.g., `10.20.0.0/24`) to a next-hop object, telling the ASIC "packets matching this prefix should be forwarded through this next hop." When a route has **multiple equal-cost paths**, the route entry points to a next-hop group instead of a single next hop — that is covered in [Load Balancing](23_load_balancing.md).
 
 A **next hop** is the forwarding target that the route entry points to. It combines the neighbor's IP address (`10.0.0.202`) with the RIF it is reachable through, giving the ASIC the information it needs to determine the egress port and look up the destination MAC from the neighbor entry. [NeighOrch](#neighbors-and-next-hops-neighorch) creates a next hop alongside every neighbor entry.
 
@@ -345,7 +345,7 @@ nh_attrs[2].value.oid = rif_oid;                     /* same RIF */
 sai_next_hop_api->create_next_hop(&nh_oid, switch_id, 3, nh_attrs);
 ```
 
-The `nh_oid` returned by the second call is the forwarding target that the rest of the system references. For a single-path route, `RouteOrch` sets `SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID` directly to this OID. For multi-path Equal-Cost Multi-Path (ECMP) routes, `RouteOrch` or `NhgOrch` creates a next-hop group member with `SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID` pointing to this OID — the member is the join object that attaches the next hop to the group (see the [next-hop group diagram](22_load_balancing.md)).
+The `nh_oid` returned by the second call is the forwarding target that the rest of the system references. For a single-path route, `RouteOrch` sets `SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID` directly to this OID. For multi-path Equal-Cost Multi-Path (ECMP) routes, `RouteOrch` or `NhgOrch` creates a next-hop group member with `SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID` pointing to this OID — the member is the join object that attaches the next hop to the group (see the [next-hop group diagram](23_load_balancing.md)).
 
 
 ## Putting It All Together
@@ -354,7 +354,7 @@ To see how the entire chain is built, consider a concrete scenario: an operator 
 
 **Step 1 — Port** (boot time, `PortsOrch`):
 
-The ASIC's physical port for `Ethernet8` is configured with speed, MTU, and admin state. A host interface is created so the CPU can send and receive control traffic on this port. At this point, the port is L2 only. (See [Ports and Host Interfaces](17_ports_and_host_interfaces.md) for details.)
+The ASIC's physical port for `Ethernet8` is configured with speed, MTU, and admin state. A host interface is created so the CPU can send and receive control traffic on this port. At this point, the port is L2 only. (See [Ports and Host Interfaces](18_ports_and_host_interfaces.md) for details.)
 
 **Step 2 — Router Interface** (IP assignment, `IntfsOrch`):
 
@@ -404,4 +404,4 @@ The dependency chain flows strictly downward: removing a port requires first rem
 
 ---
 
-**Previous**: [← Ports and Host Interfaces](17_ports_and_host_interfaces.md) · **Next**: [Punting →](19_punting.md)
+**Previous**: [← Ports and Host Interfaces](18_ports_and_host_interfaces.md) · **Next**: [Punting →](20_punting.md)

@@ -1,8 +1,8 @@
 # The SAI Object Model
 
-> **Prerequisite**: [SAI and Syncd](13_sai_and_syncd.md) — sairedis, syncd, the meta layer, and virtual IDs versus real IDs.
+> **Prerequisite**: [SAI and Syncd](14_sai_and_syncd.md) — sairedis, syncd, the meta layer, and virtual IDs versus real IDs.
 
-[SAI and Syncd](13_sai_and_syncd.md) showed how a SAI call travels from orchagent to the ASIC. This document covers the objects those calls act on: what a SAI object is, how it is named, what attributes it carries, and how objects reference each other. It also covers bulk operations, hardware counters, ASIC notifications, and the path packets take to reach the CPU. These patterns appear in every feature orchagent programs, from ports and routes to control-plane traps.
+[SAI and Syncd](14_sai_and_syncd.md) showed how a SAI call travels from orchagent to the ASIC. This document covers the objects those calls act on: what a SAI object is, how it is named, what attributes it carries, and how objects reference each other. It also covers bulk operations, hardware counters, ASIC notifications, and the path packets take to reach the CPU. These patterns appear in every feature orchagent programs, from ports and routes to control-plane traps.
 
 
 ## Objects and the Four Operations
@@ -49,7 +49,7 @@ sai_port_api->set_port_attribute(port_oid, &attr);
 
 Ports, next hops, next-hop groups, router interfaces, ACL tables, queues, and buffer profiles are all OID objects. The special value `SAI_NULL_OBJECT_ID` (zero) means "no object" — it is used when an optional OID attribute has no target.
 
-The caller treats the OID as opaque — it is a handle, not a value to decode. In SONiC, orchagent never holds an OID from the vendor SAI directly. Instead, it holds a **virtual ID** (VID) allocated by sairedis. Syncd translates each VID to the corresponding **real ID** (RID) before the ASIC sees the call. That split — including how sairedis encodes each VID — is covered in [Virtual IDs and Real IDs](13_sai_and_syncd.md#virtual-ids-and-real-ids).
+The caller treats the OID as opaque — it is a handle, not a value to decode. In SONiC, orchagent never holds an OID from the vendor SAI directly. Instead, it holds a **virtual ID** (VID) allocated by sairedis. Syncd translates each VID to the corresponding **real ID** (RID) before the ASIC sees the call. That split — including how sairedis encodes each VID — is covered in [Virtual IDs and Real IDs](14_sai_and_syncd.md#virtual-ids-and-real-ids).
 
 ### Entry Keys
 
@@ -124,11 +124,11 @@ attr.value.u32 = 9100;               /* the ID tells us to use the u32 member */
 sai_port_api->set_port_attribute(port_oid, &attr);
 ```
 
-The ID (`SAI_PORT_ATTR_MTU`) tells both the caller and the SAI implementation that `value.u32` is the active union member. Using the wrong member — for example, reading `value.oid` when the attribute is actually an integer — is undefined behavior in C. In practice, the [meta layer](13_sai_and_syncd.md#the-sai-meta-layer) catches type mismatches before they reach the ASIC.
+The ID (`SAI_PORT_ATTR_MTU`) tells both the caller and the SAI implementation that `value.u32` is the active union member. Using the wrong member — for example, reading `value.oid` when the attribute is actually an integer — is undefined behavior in C. In practice, the [meta layer](14_sai_and_syncd.md#the-sai-meta-layer) catches type mismatches before they reach the ASIC.
 
 ### Anatomy of an Attribute Declaration
 
-Every attribute ID is defined as an enum value in a SAI header file. A structured comment block above each enum value carries the metadata the [meta layer](13_sai_and_syncd.md#the-sai-meta-layer) uses to validate every call. Here are three port attributes from [`saiport.h`](https://github.com/opencomputeproject/SAI/blob/master/inc/saiport.h):
+Every attribute ID is defined as an enum value in a SAI header file. A structured comment block above each enum value carries the metadata the [meta layer](14_sai_and_syncd.md#the-sai-meta-layer) uses to validate every call. Here are three port attributes from [`saiport.h`](https://github.com/opencomputeproject/SAI/blob/master/inc/saiport.h):
 
 ```c
     /**
@@ -442,7 +442,7 @@ uint64_t values[2];
 port_api->get_port_stats(port_oid, 2, counters, values);
 ```
 
-Syncd's flex counter infrastructure polls these counters on its own thread and writes the values to COUNTERS_DB, keeping that polling off orchagent's main loop. [Flex Counters](15_flex_counters.md) covers the full mechanism: counter groups, polling configuration, and how results reach COUNTERS_DB.
+Syncd's flex counter infrastructure polls these counters on its own thread and writes the values to COUNTERS_DB, keeping that polling off orchagent's main loop. [Flex Counters](16_flex_counters.md) covers the full mechanism: counter groups, polling configuration, and how results reach COUNTERS_DB.
 
 
 ## Notifications
@@ -481,4 +481,4 @@ The SAI repository publishes only header files, not ASIC implementations. Here i
 
 ---
 
-**Previous**: [← SAI and Syncd](13_sai_and_syncd.md) · **Next**: [Flex Counters →](15_flex_counters.md)
+**Previous**: [← SAI and Syncd](14_sai_and_syncd.md) · **Next**: [Flex Counters →](16_flex_counters.md)

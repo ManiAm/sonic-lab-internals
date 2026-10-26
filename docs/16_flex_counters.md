@@ -1,6 +1,6 @@
 # Flex Counters
 
-> **Prerequisites**: [SAI and Syncd](13_sai_and_syncd.md) (syncd's processing loop and the vendor SAI), [The SAI Object Model](14_sai_object_model.md) (stats and the `get_*_stats` calls), and [Core Redis Databases](08_redis_databases.md#counters_db) (COUNTERS_DB).
+> **Prerequisites**: [SAI and Syncd](14_sai_and_syncd.md) (syncd's processing loop and the vendor SAI), [The SAI Object Model](15_sai_object_model.md) (stats and the `get_*_stats` calls), and [Core Redis Databases](08_redis_databases.md#counters_db) (COUNTERS_DB).
 
 ## What Are Counters?
 
@@ -14,7 +14,7 @@ Switching ASICs maintain **hardware counters** — registers that the chip updat
 
 <img src="../pics/counters.png" alt="segment" width="1000">
 
-All three types are read through the same `get_*_stats` SAI calls described in [The SAI Object Model](14_sai_object_model.md#stats). The counter behavior is encoded in each stat's name and documented in the SAI headers: stats with `WATERMARK` in the name are peak values, stats with `CURR_OCCUPANCY` are instantaneous values, and all others — packets, bytes, drops, errors — are cumulative. The table below shows real examples from the SAI header files:
+All three types are read through the same `get_*_stats` SAI calls described in [The SAI Object Model](15_sai_object_model.md#stats). The counter behavior is encoded in each stat's name and documented in the SAI headers: stats with `WATERMARK` in the name are peak values, stats with `CURR_OCCUPANCY` are instantaneous values, and all others — packets, bytes, drops, errors — are cumulative. The table below shows real examples from the SAI header files:
 
 | SAI stat ID | Object type | Doxygen comment | Counter type |
 |---|---|---|---|
@@ -64,7 +64,7 @@ The common counter groups are:
 
 Operators can change these intervals through CONFIG_DB. The watermark and buffer drop groups default to longer intervals because the underlying counters change less frequently and their SAI calls can be more expensive on some platforms.
 
-For the complete list of SAI stat IDs polled by each group, see [Flex Counter Groups — SAI Stat Reference](16_flex_counter_groups_reference.md).
+For the complete list of SAI stat IDs polled by each group, see [Flex Counter Groups — SAI Stat Reference](17_flex_counter_groups_reference.md).
 
 
 ## Architecture
@@ -151,7 +151,7 @@ admin@sonic:~$ sonic-db-cli FLEX_COUNTER_DB HGETALL "FLEX_COUNTER_GROUP_TABLE:PO
  'STATS_MODE': 'STATS_MODE_READ'}
 ```
 
-`STATS_MODE` controls whether counters are just read (`STATS_MODE_READ`) or read and cleared in the same call (`STATS_MODE_READ_AND_CLEAR`). This maps directly to the SAI `get_*_stats_ext` mode described in [Stats](14_sai_object_model.md#stats).
+`STATS_MODE` controls whether counters are just read (`STATS_MODE_READ`) or read and cleared in the same call (`STATS_MODE_READ_AND_CLEAR`). This maps directly to the SAI `get_*_stats_ext` mode described in [Stats](15_sai_object_model.md#stats).
 
 **2. OID lists** — which objects to poll in each group:
 
@@ -336,4 +336,4 @@ Here is the full lifecycle of a port counter, from operator configuration to CLI
 
 ---
 
-**Previous**: [← The SAI Object Model](14_sai_object_model.md) · **Next**: [Flex Counter Groups Reference →](16_flex_counter_groups_reference.md)
+**Previous**: [← The SAI Object Model](15_sai_object_model.md) · **Next**: [Flex Counter Groups Reference →](17_flex_counter_groups_reference.md)

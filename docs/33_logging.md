@@ -1,6 +1,6 @@
 # Logging in SONiC
 
-> **Prerequisites**: [Inside a Running Container](06_inside_a_running_container.md) covers how supervisord captures daemon output and how the container's rsyslog forwards it to the host. [The SWSS Container](11_swss_container.md) and [SAI and Syncd](13_sai_and_syncd.md) provide context for the SWSS logging macros and SAI recording files discussed here.
+> **Prerequisites**: [Inside a Running Container](06_inside_a_running_container.md) covers how supervisord captures daemon output and how the container's rsyslog forwards it to the host. [The SWSS Container](11_swss_container.md) and [SAI and Syncd](14_sai_and_syncd.md) provide context for the SWSS logging macros and SAI recording files discussed here.
 
 Every SONiC daemon, across every container, produces log output. Understanding where those logs end up, how to change their verbosity, and how to collect them for analysis is foundational to operating and debugging a SONiC switch. This document covers the full logging stack — from the Linux syslog primitives at the bottom, through SONiC's routing rules and C++ logging framework, up to the diagnostic bundles you hand to engineering when something goes wrong.
 
@@ -686,6 +686,6 @@ ls -lh /var/log/swss/*.rec
 dmesg | grep -i "oom\|killed process"
 ```
 
-For general debugging commands (Redis inspection, container health, interface diagnosis), see [Troubleshooting](33_troubleshooting.md).
+For general debugging commands (Redis inspection, container health, interface diagnosis), see [Troubleshooting](34_troubleshooting.md).
 
-**Previous**: [← State Interactions](31_state_interactions.md) · **Next**: [Troubleshooting →](33_troubleshooting.md)
+**Previous**: [← State Interactions](32_state_interactions.md) · **Next**: [Troubleshooting →](34_troubleshooting.md)

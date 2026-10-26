@@ -44,7 +44,7 @@ Manager daemons handle **CONFIG_DB updates** and transform them into operational
 
 ## Sync Daemons (*syncd in SWSS)
 
-> **Note**: Don't confuse these with the `syncd` process in the Syncd container (covered in [SAI and Syncd](13_sai_and_syncd.md)). The naming is unfortunately similar.
+> **Note**: Don't confuse these with the `syncd` process in the Syncd container (covered in [SAI and Syncd](14_sai_and_syncd.md)). The naming is unfortunately similar.
 
 Sync daemons handle **events from the Linux kernel or control-plane daemons**, translating real-time system state into database entries. Each daemon listens to a specific event source — typically a netlink socket for kernel events or a protocol-specific socket such as the FPM socket from FRR's zebra — parses incoming messages into key-value records, and publishes them to APPL_DB or STATE_DB.
 
@@ -84,7 +84,7 @@ When SWSS starts:
 5. orchagent waits for `portsyncd` to signal that all ports are initialized.
 6. Once ports are ready, orchagent begins processing all other APPL_DB events.
 
-Steps 4–6 are covered in detail in [Ports and Host Interfaces](17_ports_and_host_interfaces.md).
+Steps 4–6 are covered in detail in [Ports and Host Interfaces](18_ports_and_host_interfaces.md).
 
 ## Summary
 

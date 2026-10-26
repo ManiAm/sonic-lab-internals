@@ -1,8 +1,8 @@
 # Punting — Sending Packets from the ASIC to the CPU
 
-> **Prerequisites**: [Ports and Host Interfaces](17_ports_and_host_interfaces.md) — host interfaces and why data-plane traffic never reaches the CPU. [The Forwarding Chain](18_forwarding_chain.md) — the SAI forwarding object chain.
+> **Prerequisites**: [Ports and Host Interfaces](18_ports_and_host_interfaces.md) — host interfaces and why data-plane traffic never reaches the CPU. [The Forwarding Chain](19_forwarding_chain.md) — the SAI forwarding object chain.
 
-[Ports and Host Interfaces](17_ports_and_host_interfaces.md#what-flows-through-a-host-interface) introduced host interfaces and the key distinction: data-plane traffic is forwarded entirely in the ASIC at line rate, while control-plane traffic is **punted** — redirected from the ASIC to the CPU through host interfaces. This document covers the punt mechanism in detail: how the ASIC decides which packets to send to the CPU, how those decisions are programmed through SAI, and how CoPP (Control Plane Policing) rate-limits punted traffic to protect the CPU.
+[Ports and Host Interfaces](18_ports_and_host_interfaces.md#what-flows-through-a-host-interface) introduced host interfaces and the key distinction: data-plane traffic is forwarded entirely in the ASIC at line rate, while control-plane traffic is **punted** — redirected from the ASIC to the CPU through host interfaces. This document covers the punt mechanism in detail: how the ASIC decides which packets to send to the CPU, how those decisions are programmed through SAI, and how CoPP (Control Plane Policing) rate-limits punted traffic to protect the CPU.
 
 
 ## Fast Path vs Slow Path
@@ -172,4 +172,4 @@ The reverse direction — CPU to wire — is simpler. When a daemon sends a pack
 
 ---
 
-**Previous**: [← The Forwarding Chain](18_forwarding_chain.md) · **Next**: [The BGP Container and FRR →](20_bgp_container.md)
+**Previous**: [← The Forwarding Chain](19_forwarding_chain.md) · **Next**: [The BGP Container and FRR →](21_bgp_container.md)

@@ -1,6 +1,6 @@
 # Troubleshooting SONiC
 
-> **Prerequisites**: This is a reference document that assumes familiarity with SONiC's architecture. At minimum, read [Architecture Overview](02_architecture_overview.md), [Core Redis Databases](08_redis_databases.md), and [State Interactions](31_state_interactions.md) first.
+> **Prerequisites**: This is a reference document that assumes familiarity with SONiC's architecture. At minimum, read [Architecture Overview](02_architecture_overview.md), [Core Redis Databases](08_redis_databases.md), and [State Interactions](32_state_interactions.md) first.
 
 This document provides practical debugging techniques for common SONiC issues, organized by symptom.
 
@@ -255,4 +255,4 @@ If CONFIG_DB has the value but APPL_DB doesn't, the manager daemon either:
 
 ---
 
-**Previous**: [← Logging](32_logging.md)
+**Previous**: [← Logging](33_logging.md)

@@ -1,6 +1,6 @@
 # State Interactions and Data Flows
 
-> **Prerequisites**: This document ties together concepts from all prior documents. You should be familiar with the [Core Redis Databases](08_redis_databases.md), [IPC Mechanisms](10_ipc_mechanisms.md), [SWSS](11_swss_container.md), [Orchagent](12_orchagent.md), and [SAI/Syncd](13_sai_and_syncd.md).
+> **Prerequisites**: This document ties together concepts from all prior documents. You should be familiar with the [Core Redis Databases](08_redis_databases.md), [IPC Mechanisms](10_ipc_mechanisms.md), [SWSS](11_swss_container.md), [Orchagent](12_orchagent.md), and [SAI/Syncd](14_sai_and_syncd.md).
 
 This document traces end-to-end data flows through SONiC for common operations. Understanding these flows is essential for debugging and development.
 
@@ -325,4 +325,4 @@ sonic-db-cli ASIC_DB KEYS '*ROUTE*10.1.0.0*'
 
 ---
 
-**Previous**: [← Warm Reboot Deep Dive](30_warm_reboot.md) · **Next**: [Logging →](32_logging.md)
+**Previous**: [← Warm Reboot Deep Dive](31_warm_reboot.md) · **Next**: [Logging →](33_logging.md)

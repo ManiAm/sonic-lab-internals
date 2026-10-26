@@ -14,7 +14,7 @@ SAI is a **vendor-agnostic API** for controlling network forwarding elements (sw
 - **Operations**: create, remove, set, get for each object.
 - **Notifications**: asynchronous events from hardware (link state, FDB, etc.).
 
-> [The SAI Object Model](14_sai_object_model.md) examines the SAI API itself in detail: how objects are named, how attributes govern their behavior, and the patterns orchagent modules use to program them.
+> [The SAI Object Model](15_sai_object_model.md) examines the SAI API itself in detail: how objects are named, how attributes govern their behavior, and the patterns orchagent modules use to program them.
 
 ### SAI Headers vs. Vendor Implementations
 
@@ -175,7 +175,7 @@ The syncd container has two primary responsibilities:
 
 ### Processing Loop
 
-Syncd's main loop (`Syncd::run()`) blocks on a `select()` waiting for events from multiple sources: the ASIC_DB channel, a restart query, and [flex counter](15_flex_counters.md) tables. When a new ASIC_DB entry arrives, syncd drains all pending entries in a loop:
+Syncd's main loop (`Syncd::run()`) blocks on a `select()` waiting for events from multiple sources: the ASIC_DB channel, a restart query, and [flex counter](16_flex_counters.md) tables. When a new ASIC_DB entry arrives, syncd drains all pending entries in a loop:
 
 1. Pops the message (key, operation, fields) from the `ConsumerTable`.
 2. Parses the key to extract the SAI object type and deserializes the attributes.
@@ -289,8 +289,8 @@ Syncd's main loop detects the new entry on the ASIC_DB channel and processes it 
 | syncd       | Syncd container          | Execute vendor SAI against the real SDK |
 | Vendor SDK  | Syncd container          | Drive the physical ASIC |
 
-SAI gives SONiC a single, vendor-agnostic API for programming any supported ASIC. Sairedis serializes orchagent's SAI calls into ASIC_DB, the meta layer validates them and assigns VIDs, and syncd translates VIDs to vendor RIDs before calling the real hardware SDK. The next document, [The SAI Object Model](14_sai_object_model.md), examines the API itself: object types, attributes, and the patterns orchagent modules use to program them.
+SAI gives SONiC a single, vendor-agnostic API for programming any supported ASIC. Sairedis serializes orchagent's SAI calls into ASIC_DB, the meta layer validates them and assigns VIDs, and syncd translates VIDs to vendor RIDs before calling the real hardware SDK. The next document, [The SAI Object Model](15_sai_object_model.md), examines the API itself: object types, attributes, and the patterns orchagent modules use to program them.
 
 ---
 
-**Previous**: [← Orchagent Deep Dive](12_orchagent.md) · **Next**: [The SAI Object Model →](14_sai_object_model.md)
+**Previous**: [← The Orch Catalog](13_orch_catalog.md) · **Next**: [The SAI Object Model →](15_sai_object_model.md)

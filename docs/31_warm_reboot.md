@@ -1,8 +1,8 @@
 # Warm Reboot Deep Dive
 
-> **Prerequisites**: [Reboot Types](29_reboot_types.md) (comparison of cold, fast, and warm reboot), [The Database Container](07_database_container.md) (Redis persistence), [SAI and Syncd](13_sai_and_syncd.md) (VID/RID mappings and the SAI meta layer), and [Orchagent Deep Dive](12_orchagent.md) (how orchagent processes state from APPL_DB to ASIC_DB).
+> **Prerequisites**: [Reboot Types](30_reboot_types.md) (comparison of cold, fast, and warm reboot), [The Database Container](07_database_container.md) (Redis persistence), [SAI and Syncd](14_sai_and_syncd.md) (VID/RID mappings and the SAI meta layer), and [Orchagent Deep Dive](12_orchagent.md) (how orchagent processes state from APPL_DB to ASIC_DB).
 
-[Reboot Types](29_reboot_types.md) introduced the five reboot types and summarized what each one does. This document goes deeper into **warm reboot** — the most complex reboot path in SONiC. It covers the full lifecycle: what happens before shutdown, how the kernel transitions, how each layer restores and reconciles state after boot, and how the system knows that warm reboot is complete.
+[Reboot Types](30_reboot_types.md) introduced the five reboot types and summarized what each one does. This document goes deeper into **warm reboot** — the most complex reboot path in SONiC. It covers the full lifecycle: what happens before shutdown, how the kernel transitions, how each layer restores and reconciles state after boot, and how the system knows that warm reboot is complete.
 
 ## The Core Idea
 
@@ -119,7 +119,7 @@ kexec --load <new_kernel> --initrd=<initrd> --append="SONIC_BOOT_TYPE=warm ..."
 
 ### Step 4: LACP Keepalive
 
-If the switch has LAG interfaces, the script starts `lag_keepalive.py`, which continues sending LACP PDUs through the reboot gap to keep the partner from timing out. See [LACP Slow Mode](29_reboot_types.md#lacp-slow-mode) for why slow mode is required and how the keepalive works.
+If the switch has LAG interfaces, the script starts `lag_keepalive.py`, which continues sending LACP PDUs through the reboot gap to keep the partner from timing out. See [LACP Slow Mode](30_reboot_types.md#lacp-slow-mode) for why slow mode is required and how the keepalive works.
 
 > **Requirement:** All LAG interfaces must be configured in LACP slow mode.
 
@@ -143,13 +143,13 @@ This is a critical step. Everything after it — stopping services, syncd pre-sh
 
 ### Step 6: Stop Services, BGP Graceful Restart, and Syncd Pre-Shutdown
 
-The script stops all SONiC containers in a defined order. When the **bgp** container stops, FRR automatically signals [BGP Graceful Restart](29_reboot_types.md#bgp-graceful-restart) to all peers, telling them to hold the switch's routes for up to 120 seconds rather than withdrawing them. This keeps traffic flowing toward the switch while it restarts.
+The script stops all SONiC containers in a defined order. When the **bgp** container stops, FRR automatically signals [BGP Graceful Restart](30_reboot_types.md#bgp-graceful-restart) to all peers, telling them to hold the switch's routes for up to 120 seconds rather than withdrawing them. This keeps traffic flowing toward the switch while it restarts.
 
 When the **swss** container stops, the script triggers syncd pre-shutdown before continuing to the next service. Syncd saves its internal state to a file on disk so the new syncd instance can reconnect to the ASIC without resetting it:
 
 | Saved State | Purpose |
 |-------------|---------|
-| **VID↔RID mapping table** | Maps SONiC's Virtual IDs to the ASIC's Real IDs. Without this, the new syncd would not know which SAI objects correspond to which hardware entries. See [VID and RID](13_sai_and_syncd.md#virtual-ids-and-real-ids). |
+| **VID↔RID mapping table** | Maps SONiC's Virtual IDs to the ASIC's Real IDs. Without this, the new syncd would not know which SAI objects correspond to which hardware entries. See [VID and RID](14_sai_and_syncd.md#virtual-ids-and-real-ids). |
 | **SAI object tree** | The complete tree of SAI objects (switches, ports, routes, neighbors, next-hop groups, ACLs, etc.) and their attributes as last known. |
 | **SAI meta layer state** | The meta layer's internal bookkeeping — reference counts, attribute records — needed to resume validation of future SAI operations. |
 
@@ -159,7 +159,7 @@ Because orchagent is already frozen (Step 5), no new SAI operations arrive while
 
 ### Step 7: Redis State Persistence
 
-Only now — after orchagent is frozen and all services are stopped — does the script save the Redis snapshot. It trims the databases and copies `dump.rdb` from the database container to `/host/warmboot/`. Notably, warm reboot keeps `ASIC_DB` in the snapshot so the new syncd can reconnect to the running ASIC using the saved SAI object IDs. See [The Redis Snapshot](29_reboot_types.md#the-redis-snapshot) for the full mechanism and how it differs across reboot types.
+Only now — after orchagent is frozen and all services are stopped — does the script save the Redis snapshot. It trims the databases and copies `dump.rdb` from the database container to `/host/warmboot/`. Notably, warm reboot keeps `ASIC_DB` in the snapshot so the new syncd can reconnect to the running ASIC using the saved SAI object IDs. See [The Redis Snapshot](30_reboot_types.md#the-redis-snapshot) for the full mechanism and how it differs across reboot types.
 
 Saving the snapshot last guarantees consistency: because orchagent was frozen before services stopped, and services were stopped before the save, the `dump.rdb` reflects the final state of every database with no in-flight changes.
 
@@ -220,7 +220,7 @@ Orchagent starts and detects that it is in warm restart mode. Instead of program
 
 FRR starts and re-establishes BGP sessions with all peers. Because the switch signaled Graceful Restart before shutting down, the peers have been holding routes. The new BGP session negotiates GR, and the peers send their full route tables again. FRR processes these routes and pushes them to zebra → fpmsyncd → APPL_DB, just like a normal route update.
 
-> **Requirement:** Both the SONiC switch and its BGP peers must support [Graceful Restart (RFC 4724)](29_reboot_types.md#bgp-graceful-restart).
+> **Requirement:** Both the SONiC switch and its BGP peers must support [Graceful Restart (RFC 4724)](30_reboot_types.md#bgp-graceful-restart).
 
 The key difference is that most of these routes will match what is already in APPL_DB (carried over from the pre-reboot state). Orchagent's reconciliation process detects this and avoids reprogramming them.
 
@@ -530,4 +530,4 @@ If any service shows a state other than `reconciled`, check the syslog for error
 
 ---
 
-**Previous**: [← Reboot Types](29_reboot_types.md) · **Next**: [State Interactions →](31_state_interactions.md)
+**Previous**: [← Reboot Types](30_reboot_types.md) · **Next**: [State Interactions →](32_state_interactions.md)

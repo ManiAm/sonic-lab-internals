@@ -1,6 +1,6 @@
 # Ports and Host Interfaces
 
-> **Prerequisites**: [Orchagent Deep Dive](12_orchagent.md) — the select loop, `m_orchList` ordering, and `doTask()`. [The SAI Object Model](14_sai_object_model.md) — object IDs, entry keys, and the four operations.
+> **Prerequisites**: [Orchagent Deep Dive](12_orchagent.md) — the select loop, `m_orchList` ordering, and `doTask()`. [The SAI Object Model](15_sai_object_model.md) — object IDs, entry keys, and the four operations.
 
 Before the switch can do anything useful, it must first initialize its physical ports and create the Linux network devices (**netdevs**) that let the CPU communicate with the ASIC. Three processes inside the SWSS container coordinate this work, starting in a strict order enforced by `supervisord`:
 
@@ -15,7 +15,7 @@ Before the switch can do anything useful, it must first initialize its physical 
 
 `portsyncd` is the first process to start. Its job is simple but critical: read the port definitions from **CONFIG_DB** and republish them to **APPL_DB** so that `PortsOrch` can consume them.
 
-> The PORT table in CONFIG_DB is populated at boot time from the saved configuration file — see [How CONFIG_DB Is Populated at Boot](27_configuration_management.md#how-config_db-is-populated-at-boot).
+> The PORT table in CONFIG_DB is populated at boot time from the saved configuration file — see [How CONFIG_DB Is Populated at Boot](28_configuration_management.md#how-config_db-is-populated-at-boot).
 
 ```mermaid
 %%{init: {'sequence': {'mirrorActors': false}}}%%
@@ -177,7 +177,7 @@ Because the netdev looks like a normal Linux network interface, standard Linux t
 
 - **Set MTU** — `ip link set dev Ethernet96 mtu 9100` (done by `portmgrd`)
 - **Bring up/down** — `ip link set dev Ethernet96 up` (done by `portmgrd`)
-- **Assign an IP address** — `ip addr add 10.0.0.48/31 dev Ethernet96` (done by `intfmgrd` — covered in [The Forwarding Chain](18_forwarding_chain.md))
+- **Assign an IP address** — `ip addr add 10.0.0.48/31 dev Ethernet96` (done by `intfmgrd` — covered in [The Forwarding Chain](19_forwarding_chain.md))
 - **Open sockets** — user-space processes like BGP can bind to these interfaces
 - **Run tcpdump** — `tcpdump -i Ethernet96` captures traffic on this interface
 
@@ -187,7 +187,7 @@ However, there is a critical distinction between what *appears* on the netdev an
 
 **Data-plane traffic never touches host interfaces.** When the ASIC forwards packets at line rate — millions of packets per second — it does so entirely in hardware. Packets are matched against route entries, rewritten, and sent out egress ports without ever reaching the CPU or the Linux kernel.
 
-Only **control-plane traffic** — packets the ASIC deliberately redirects to the CPU — flows through the netdev. This includes ARP requests, BGP messages, LLDP, ICMP, and similar protocols that the switch must process locally. How the ASIC decides which packets to redirect, and how SONiC rate-limits them to protect the CPU, is covered in [Punting](19_punting.md).
+Only **control-plane traffic** — packets the ASIC deliberately redirects to the CPU — flows through the netdev. This includes ARP requests, BGP messages, LLDP, ICMP, and similar protocols that the switch must process locally. How the ASIC decides which packets to redirect, and how SONiC rate-limits them to protect the CPU, is covered in [Punting](20_punting.md).
 
 This means `tcpdump -i Ethernet96` captures **only control-plane traffic** — the millions of data-plane packets being forwarded at line rate through the same physical port are invisible because they never leave the ASIC.
 
@@ -247,8 +247,8 @@ These are kernel operations, not SAI operations. The ASIC's MTU and admin state 
 | Port           | ASIC init + `PortsOrch` configures | Switch boot    | Speed, MTU, admin state, lanes |
 | Host Interface | `PortsOrch`                        | Switch boot    | Type (netdev), port OID, name |
 
-At this point, the switch's physical ports are initialized and the CPU can exchange control-plane traffic with the ASIC through host interfaces. But the ports are still Layer 2 (L2) objects — they can bridge traffic but cannot route IP packets. The next document, [The Forwarding Chain](18_forwarding_chain.md), covers how SONiC promotes ports to Layer 3 and programs the ASIC to route packets hop by hop.
+At this point, the switch's physical ports are initialized and the CPU can exchange control-plane traffic with the ASIC through host interfaces. But the ports are still Layer 2 (L2) objects — they can bridge traffic but cannot route IP packets. The next document, [The Forwarding Chain](19_forwarding_chain.md), covers how SONiC promotes ports to Layer 3 and programs the ASIC to route packets hop by hop.
 
 ---
 
-**Previous**: [← Flex Counter Groups Reference](16_flex_counter_groups_reference.md) · **Next**: [The Forwarding Chain →](18_forwarding_chain.md)
+**Previous**: [← Flex Counter Groups Reference](17_flex_counter_groups_reference.md) · **Next**: [The Forwarding Chain →](19_forwarding_chain.md)
