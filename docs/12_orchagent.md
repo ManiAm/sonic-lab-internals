@@ -26,7 +26,22 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName)
 
 ### 2. Consumer Abstraction
 
-The Orch base class wraps the IPC mechanism into a **Consumer** object. The Consumer handles all Redis interaction details — connecting, subscribing, reading data, and deserializing — so the Orch itself never deals with raw Redis commands.
+The Orch base class wraps each subscribed table into a **Consumer** object. The Consumer handles all Redis interaction details — connecting, subscribing, reading data, and deserializing — so the Orch itself never deals with raw Redis commands.
+
+An Orch that watches a single table has one Consumer. An Orch that watches multiple tables has one Consumer **per table**, all stored in `m_consumerMap` — a `std::map<string, shared_ptr<Executor>>` keyed by table name. For example, IntfsOrch subscribes to both `INTF_TABLE` and `SAG_TABLE`, so its `m_consumerMap` has two entries:
+
+```cpp
+// orchdaemon.cpp — IntfsOrch watches two APPL_DB tables
+vector<table_name_with_pri_t> intf_tables = {
+    { APP_INTF_TABLE_NAME,  IntfsOrch::intfsorch_pri },
+    { APP_SAG_TABLE_NAME,   IntfsOrch::intfsorch_pri }
+};
+gIntfsOrch = new IntfsOrch(m_applDb, intf_tables, vrf_orch, m_chassisAppDb);
+```
+
+The Orch base constructor calls `addConsumer()` for each table name. That function inspects the database ID and creates the right IPC type automatically, then inserts the Consumer into `m_consumerMap`.
+
+Every Consumer in the map is also a `Selectable`, which is how OrchDaemon's [main select loop](#the-main-select-loop) knows when any of them has new data. When the loop wakes an Orch, it iterates `m_consumerMap` and calls `doTask()` for each Consumer that has pending entries.
 
 ### 3. Task Queue (m_toSync)
 
@@ -86,10 +101,13 @@ All Orchs are registered in an **ordered list** (`m_orchList`) inside `OrchDaemo
 
 ```
 forever:
-    wait for a Redis notification (any subscribed table changed)
-    for each Orch in m_orchList (in priority order):
-        if this Orch has pending work:
-            call orch->doTask()
+    wait for a Redis notification (or 1-second timeout)
+    pop the notification data into the correct consumer's m_toSync
+    for each Orch in m_orchList (in fixed order):
+        orch->doTask()
+            for each table in m_consumerMap (alphabetical):
+                if this table's m_toSync has entries:
+                    process them
 ```
 
 All Orchs share this single thread — changes are applied sequentially, which avoids race conditions but means ordering matters. Each Orch must complete its `doTask()` quickly to avoid starving the others. The loop blocks until Redis signals that at least one subscribed table has new data, then gives every Orch with pending work a chance to run, in `m_orchList` order.
@@ -102,22 +120,245 @@ SwitchOrch → PortsOrch → IntfsOrch → NeighOrch → NhgOrch → RouteOrch
 
 Each Orch depends on SAI objects created by the ones to its left. If any link is missing, the downstream Orchs queue their work in `m_toSync` and retry on the next iteration (as described in [doTask()](#4-dotask--the-processing-loop) above).
 
-### Worked Example: Two Orchs, One Loop Pass
 
-An operator assigns IP `10.0.0.1/31` to `Ethernet0` and configures static neighbor `10.0.0.2` on the same interface. Two manager daemons react and write to APPL_DB at roughly the same time:
+## Worked Example: Two Orchs
 
-- **intfmgrd** writes to `INTF_TABLE` (consumed by IntfsOrch — position 7 in `m_orchList`)
-- **nbrmgrd** writes to `NEIGH_TABLE` (consumed by NeighOrch — position 8 in `m_orchList`)
+Consider two Orchs registered in `m_orchList`. Each subscribes to three CONFIG_DB tables — two unique and one shared:
 
-The select loop wakes up and both Orchs have pending work. Here is what happens:
+```
+AlphaOrch (m_orchList position 3)
+  m_consumerMap:
+    "ALPHA_CFG"  → Executor  (SubscriberStateTable on CONFIG_DB:ALPHA_CFG)
+    "ALPHA_DATA" → Executor  (SubscriberStateTable on CONFIG_DB:ALPHA_DATA)
+    "SHARED_TBL" → Executor  (SubscriberStateTable on CONFIG_DB:SHARED_TBL)
 
-<img src="../pics/orch-example.png" alt="segment" width="650">
+BetaOrch (m_orchList position 5)
+  m_consumerMap:
+    "BETA_CFG"   → Executor  (SubscriberStateTable on CONFIG_DB:BETA_CFG)
+    "BETA_DATA"  → Executor  (SubscriberStateTable on CONFIG_DB:BETA_DATA)
+    "SHARED_TBL" → Executor  (SubscriberStateTable on CONFIG_DB:SHARED_TBL)
+```
 
-Both succeed in a **single loop pass** because IntfsOrch (position 7) ran before NeighOrch (position 8) and created the RIF that the neighbor entry requires.
+Six Executor objects in total — one per table per orch. Note that `SHARED_TBL` appears in **both** maps: each orch has its own independent Executor for the same Redis table. At startup, OrchDaemon collects all six into its `Select` object:
 
-**What if the order were reversed?** If NeighOrch ran first, it would look up the RIF for `Ethernet0`, find nothing, and leave the entry in `m_toSync`. IntfsOrch would then create the RIF. On the *next* loop pass, NeighOrch would retry and succeed — but that extra iteration adds unnecessary latency. The correct `m_orchList` order avoids this by guaranteeing dependencies are satisfied first.
+```cpp
+for (Orch *o : m_orchList)
+    m_select->addSelectables(o->getSelectables());
+```
 
-> **Key takeaway**: A single Redis notification can wake multiple Orchs. The select loop gives every Orch with pending work a turn, in `m_orchList` order. This ordering is the *primary* mechanism for dependency resolution; the `m_toSync` retry is the safety net for cases where data arrives across separate loop passes.
+`getSelectables()` iterates `m_consumerMap` — a `std::map` sorted alphabetically by table name. So executors are added in `m_orchList` order first, then alphabetically within each orch:
+
+```
+1. AlphaOrch → ALPHA_CFG, ALPHA_DATA, SHARED_TBL
+2. BetaOrch  → BETA_CFG,  BETA_DATA,  SHARED_TBL
+```
+
+This order matters. Each executor's creation timestamp determines its initial position in the `Select` priority queue. When multiple executors have data at the same time, `Select` picks the one with the **oldest timestamp** first — which means executors from earlier orchs (and earlier alphabetically within the same orch) are processed first.
+
+The main loop then runs:
+
+```cpp
+while (true)
+{
+    Selectable *s;
+    m_select->select(&s, SELECT_TIMEOUT);   // blocks until one executor has data
+
+    auto *c = (Executor *)s;
+    c->execute();                            // pop Redis data → m_toSync
+
+    for (Orch *o : m_orchList)               // sweep every orch
+        o->doTask();                         // process any consumer with pending entries
+}
+```
+
+`select()` blocks until at least one executor has new data, then returns **one** executor per call. After popping that executor's data into `m_toSync`, the loop sweeps **every** Orch in `m_orchList` order — giving all consumers with pending entries a chance to run.
+
+> **Takeaway**: `select()` returns one executor per loop iteration. When multiple executors are ready, it picks the one with the oldest timestamp — which follows `m_orchList` order first, then alphabetical table-name order within the same orch.
+
+Four scenarios illustrate how this works in practice:
+
+| # | Scenario | What happens |
+|---|----------|-------------|
+| 1 | [Unique table](#scenario-1--a-unique-table-changes) | One executor fires, one orch processes, the other skips |
+| 2 | [Shared table](#scenario-2--the-shared-table-changes) | Both orchs' executors fire independently, processed one per iteration |
+| 3 | [Two tables, same orch](#scenario-3--two-tables-in-the-same-orch-change-at-the-same-time) | Each table gets its own iteration, ordered by timestamp |
+| 4 | [Processing fails](#scenario-4--processing-fails-and-the-entry-stays-in-m_tosync) | Failed entry stays in `m_toSync`, retried on the next event |
+
+### Scenario 1 — A unique table changes
+
+An operator modifies `ALPHA_CFG` in CONFIG_DB. Only AlphaOrch subscribes to this table, so only one executor wakes up:
+
+```
+ALPHA_CFG changes in CONFIG_DB
+       │
+       ▼
+select() returns AlphaOrch's ALPHA_CFG executor
+       │
+       ▼
+c->execute()  → pops data into AlphaOrch's m_toSync["ALPHA_CFG"]
+       │
+       ▼
+for (Orch *o : m_orchList):
+  AlphaOrch->doTask()
+    ├── "ALPHA_CFG"  → has data → PROCESS ✓
+    ├── "ALPHA_DATA" → empty    → skip
+    └── "SHARED_TBL" → empty    → skip
+  BetaOrch->doTask()
+    ├── "BETA_CFG"   → empty    → skip
+    ├── "BETA_DATA"  → empty    → skip
+    └── "SHARED_TBL" → empty    → skip
+```
+
+One executor, one loop iteration, done. BetaOrch runs its sweep but has nothing to do.
+
+### Scenario 2 — The shared table changes
+
+An operator modifies `SHARED_TBL`. Both orchs subscribe to it, so **both** executors receive the Redis key-space notification independently:
+
+```
+SHARED_TBL changes in CONFIG_DB
+       │
+       │  Redis publishes a key-space notification.
+       │  Both AlphaOrch's and BetaOrch's SHARED_TBL executors
+       │  receive it — they are independent SubscriberStateTables
+       │  on the same Redis channel.
+       │
+       ▼
+╔═══════════════════════════════════════════════════════════════╗
+║ Iteration 1                                                   ║
+╚═══════════════════════════════════════════════════════════════╝
+select() returns AlphaOrch's SHARED_TBL executor (older timestamp)
+       │
+       ▼
+c->execute()  → pops data into AlphaOrch's m_toSync["SHARED_TBL"]
+       │
+       ▼
+for (Orch *o : m_orchList):
+  AlphaOrch->doTask()
+    ├── "ALPHA_CFG"  → empty    → skip
+    ├── "ALPHA_DATA" → empty    → skip
+    └── "SHARED_TBL" → has data → PROCESS ✓
+  BetaOrch->doTask()
+    ├── "BETA_CFG"   → empty    → skip
+    ├── "BETA_DATA"  → empty    → skip
+    └── "SHARED_TBL" → empty    → skip          ← not yet popped
+
+╔═══════════════════════════════════════════════════════════════╗
+║ Iteration 2                                                   ║
+╚═══════════════════════════════════════════════════════════════╝
+select() returns immediately — BetaOrch's SHARED_TBL executor
+is still pending
+       │
+       ▼
+c->execute()  → pops data into BetaOrch's m_toSync["SHARED_TBL"]
+       │
+       ▼
+for (Orch *o : m_orchList):
+  AlphaOrch->doTask()
+    └── all empty → skip
+  BetaOrch->doTask()
+    ├── "BETA_CFG"   → empty    → skip
+    ├── "BETA_DATA"  → empty    → skip
+    └── "SHARED_TBL" → has data → PROCESS ✓
+```
+
+`select()` returns one executor per iteration. Since both executors received the notification, the loop runs twice — once for each. The two orchs process the shared data independently; they never see each other's `m_toSync`.
+
+### Scenario 3 — Two tables in the same orch change at the same time
+
+Assume both `ALPHA_CFG` and `ALPHA_DATA` have data waiting at the same time. Each executor is popped in its own loop iteration:
+
+```
+ALPHA_CFG and ALPHA_DATA both have data
+
+╔═══════════════════════════════════════════════════════════════╗
+║ Iteration 1                                                   ║
+╚═══════════════════════════════════════════════════════════════╝
+select() returns AlphaOrch's ALPHA_CFG executor
+       │
+       ▼
+c->execute()  → pops ALPHA_CFG data into m_toSync["ALPHA_CFG"]
+       │
+       ▼
+AlphaOrch->doTask()
+  ├── "ALPHA_CFG"  → has data → PROCESS ✓
+  ├── "ALPHA_DATA" → empty    → skip
+  └── "SHARED_TBL" → empty    → skip
+
+╔═══════════════════════════════════════════════════════════════╗
+║ Iteration 2                                                   ║
+╚═══════════════════════════════════════════════════════════════╝
+select() returns AlphaOrch's ALPHA_DATA executor
+       │
+       ▼
+c->execute()  → pops ALPHA_DATA data into m_toSync["ALPHA_DATA"]
+       │
+       ▼
+AlphaOrch->doTask()
+  ├── "ALPHA_CFG"  → empty    → skip
+  ├── "ALPHA_DATA" → has data → PROCESS ✓
+  └── "SHARED_TBL" → empty    → skip
+```
+
+Each table is popped and fully processed in its own iteration. The processing order follows the `select()` rules described in the [setup](#worked-example-two-orchs): earliest timestamp first.
+
+### Scenario 4 — Processing fails and the entry stays in m_toSync
+
+AlphaOrch processes an `ALPHA_CFG` entry, but it depends on a SAI object that does not exist yet (e.g., a RIF that another orch has not created). The Orch's `doTask(Consumer&)` skips the entry — it stays in `m_toSync` for retry:
+
+```
+ALPHA_CFG changes in CONFIG_DB
+
+╔═══════════════════════════════════════════════════════════════╗
+║ Iteration 1                                                   ║
+╚═══════════════════════════════════════════════════════════════╝
+select() returns AlphaOrch's ALPHA_CFG executor
+       │
+       ▼
+c->execute()  → pops data into AlphaOrch's m_toSync["ALPHA_CFG"]
+       │
+       ▼
+for (Orch *o : m_orchList):
+  AlphaOrch->doTask()
+    ├── "ALPHA_CFG"  → has data → FAILS (dependency missing) → stays in m_toSync
+    ├── "ALPHA_DATA" → empty          → skip
+    └── "SHARED_TBL" → empty          → skip
+  BetaOrch->doTask()
+    ├── "BETA_CFG"   → empty          → skip
+    ├── "BETA_DATA"  → empty          → skip
+    └── "SHARED_TBL" → empty          → skip
+```
+
+The entry is now stuck in `m_toSync["ALPHA_CFG"]`. What triggers the next retry?
+
+**Not timeout.** When `select()` times out (after 1 second with no events), the main loop calls `flush()` to push any buffered SAI operations to ASIC_DB — but it does **not** call `doTask()`. Retries are not timer-driven.
+
+**Any new event.** The for-loop sweep runs after **every** `execute()` call, regardless of which executor fired. So when *any* executor in the entire system receives new data — even an unrelated table in BetaOrch — the sweep calls `doTask()` on all orchs, and AlphaOrch's stuck entry gets another chance:
+
+```
+Some time later, BETA_CFG changes in CONFIG_DB
+
+╔═══════════════════════════════════════════════════════════════╗
+║ Iteration 2                                                   ║
+╚═══════════════════════════════════════════════════════════════╝
+select() returns BetaOrch's BETA_CFG executor
+       │
+       ▼
+c->execute()  → pops data into BetaOrch's m_toSync["BETA_CFG"]
+       │
+       ▼
+for (Orch *o : m_orchList):          ← sweeps ALL orchs
+  AlphaOrch->doTask()
+    ├── "ALPHA_CFG"  → has data (retry) → dependency now exists → PROCESS ✓
+    ├── "ALPHA_DATA" → empty → skip
+    └── "SHARED_TBL" → empty → skip
+  BetaOrch->doTask()
+    ├── "BETA_CFG"   → already processed in execute() → skip
+    ├── "BETA_DATA"  → empty → skip
+    └── "SHARED_TBL" → empty → skip
+```
+
+The retry succeeds because the dependency (e.g., the RIF) was created by a different orch in an earlier iteration. The for-loop sweep after every `execute()` is the retry mechanism — it gives **every** orch with pending `m_toSync` entries a chance to run, even if the current event had nothing to do with them.
 
 ## SAI Interaction
 
