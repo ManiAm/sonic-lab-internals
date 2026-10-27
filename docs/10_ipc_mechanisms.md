@@ -106,8 +106,6 @@ sequenceDiagram
     Note right of Consumer: Process: "Ethernet0 admin is now down"
 ```
 
-**Used for**: Monitoring changes to CONFIG_DB and STATE_DB.
-
 **Advantages**:
 - Simple — relies entirely on built-in Redis functionality.
 - No serialization required — the producer writes standard Redis fields, and the consumer reads them directly.
@@ -115,6 +113,8 @@ sequenceDiagram
 
 **Disadvantages**:
 - **Missed events are not replayed**: Redis does not store the notification. Events that fire while the subscriber is down are gone. When the subscriber starts, the first `pops()` still returns one `SET` tuple for each key already in the table.
+
+**Used for**: Monitoring changes to CONFIG_DB and STATE_DB.
 
 **SONiC class**: [`SubscriberStateTable`](https://github.com/sonic-net/sonic-swss-common/blob/master/common/subscriberstatetable.h) (in `swsscommon`)
 
@@ -143,8 +143,6 @@ sequenceDiagram
     Note right of Consumer: pops() → (key=Ethernet0, op=port_state_change, fields)
 ```
 
-**Used for**: Asynchronous notifications from syncd to orchagent — port link-down events (from the ASIC), MAC learn events (FDB notifications), and BFD session state changes.
-
 **Advantages**:
 - Well-suited for small, event-driven notifications where the message itself carries all necessary data.
 - No intermediate storage in Redis — the message travels directly from publisher to subscriber.
@@ -152,6 +150,8 @@ sequenceDiagram
 **Disadvantages**:
 - **Serialization overhead**: Data must be converted to JSON by the producer and parsed back by the consumer. This adds CPU cost and makes the pattern unsuitable for large payloads.
 - **Events are lost if the subscriber is down**: Redis does not keep the published message. There is no startup read of a table, because the notification was never stored as a key.
+
+**Used for**: Asynchronous notifications from syncd to orchagent — port link-down events (from the ASIC), MAC learn events (FDB notifications), and BFD session state changes.
 
 **SONiC classes**: [`NotificationProducer`](https://github.com/sonic-net/sonic-swss-common/blob/master/common/notificationproducer.h), [`NotificationConsumer`](https://github.com/sonic-net/sonic-swss-common/blob/master/common/notificationconsumer.h)
 
@@ -207,8 +207,6 @@ sequenceDiagram
     end
 ```
 
-**Used for**: Communication from orchagent to syncd via ASIC_DB.
-
 **Key details**:
 - The staging area is a Redis **list**, which enforces FIFO (first in, first out) ordering — the first message pushed is the first one popped.
 - The queue key is formed by appending `_KEY_VALUE_OP_QUEUE` to the table name, for example: `ASIC_STATE_KEY_VALUE_OP_QUEUE`.
@@ -222,6 +220,8 @@ sequenceDiagram
 - JSON serialization and deserialization add CPU overhead.
 - Each queue serves **one table only** — multiple tables require multiple producer/consumer pairs.
 - Only **one consumer** can read from a given queue (since `LRANGE` + `LTRIM` is destructive — once entries are trimmed, they are gone).
+
+**Used for**: Communication from orchagent to syncd via ASIC_DB.
 
 **SONiC classes**: [`ProducerTable`](https://github.com/sonic-net/sonic-swss-common/blob/master/common/producertable.h), [`ConsumerTable`](https://github.com/sonic-net/sonic-swss-common/blob/master/common/consumertable.h)
 
@@ -263,8 +263,6 @@ sequenceDiagram
     end
 ```
 
-**Used for**: Communication from application daemons — both manager daemons and sync daemons — to APPL_DB, where orchagent consumes the updates.
-
 **Key details**:
 - Uses a Redis **SET** for tracking changed keys and Redis **HASHes** for staging data, rather than a list. Each table has its own distinctly named key set and temp hashes.
 - The key set name is formed by appending `_KEY_SET` to the table name, for example: `PORT_TABLE_KEY_SET`. A separate del set (`PORT_TABLE_DEL_SET`) tracks keys that were deleted. The temporary hashes use an underscore prefix, for example: `_PORT_TABLE:Ethernet0`.
@@ -277,6 +275,8 @@ sequenceDiagram
 
 **Disadvantages**:
 - **No ordering guarantee**: If a port goes up, down, up, down in rapid succession and the consumer has not yet processed any of these updates, only the last state is kept. The consumer never sees the intermediate states. If ordering matters, the application layer must handle it explicitly.
+
+**Used for**: Communication from application daemons — both manager daemons and sync daemons — to APPL_DB, where orchagent consumes the updates.
 
 **SONiC classes**: [`ProducerStateTable`](https://github.com/sonic-net/sonic-swss-common/blob/master/common/producerstatetable.h), [`ConsumerStateTable`](https://github.com/sonic-net/sonic-swss-common/blob/master/common/consumerstatetable.h)
 
@@ -310,8 +310,6 @@ sequenceDiagram
     Producer-->>Redis: (optional) persist to DB
 ```
 
-**Used for**: Performance-critical paths where Redis round-trip latency is too high — for example, bulk route updates from `fpmsyncd` to orchagent.
-
 **Key details**:
 - The notification travels over a ZMQ socket (TCP), not through Redis. This removes Redis as a bottleneck on the notification path.
 - `ZmqProducerStateTable` extends `ProducerStateTable`, so it inherits the same set+hash staging semantics when DB persistence is enabled.
@@ -326,7 +324,10 @@ sequenceDiagram
 - **Additional dependency**: Requires a ZMQ server and client to be set up alongside Redis.
 - **Point-to-point**: Unlike Redis pub/sub, ZMQ messages go to a single consumer — no native fan-out to multiple subscribers.
 
+**Used for**: Performance-critical paths where Redis round-trip latency is too high — for example, bulk route updates from `fpmsyncd` to orchagent.
+
 **SONiC classes**: [`ZmqProducerStateTable`](https://github.com/sonic-net/sonic-swss-common/blob/master/common/zmqproducerstatetable.h), [`ZmqConsumerStateTable`](https://github.com/sonic-net/sonic-swss-common/blob/master/common/zmqconsumerstatetable.h)
+
 
 ## Comparison Summary
 
@@ -367,6 +368,8 @@ sequenceDiagram
 
     Note over CFG,MGR: Pattern 1: SubscriberStateTable
     CFG-->>MGR: key-space notification
+
+    MGR->>MGR: ip link set dev Ethernet0 down
 
     Note over MGR,APP: Pattern 4: ProducerStateTable
     MGR->>APP: stage in PORT_TABLE_KEY_SET + _PORT_TABLE:Ethernet0

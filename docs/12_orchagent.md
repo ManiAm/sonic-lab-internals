@@ -353,7 +353,7 @@ for (Orch *o : m_orchList):          ← sweeps ALL orchs
     ├── "ALPHA_DATA" → empty → skip
     └── "SHARED_TBL" → empty → skip
   BetaOrch->doTask()
-    ├── "BETA_CFG"   → already processed in execute() → skip
+    ├── "BETA_CFG"   → has data → PROCESS ✓
     ├── "BETA_DATA"  → empty → skip
     └── "SHARED_TBL" → empty → skip
 ```
