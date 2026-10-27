@@ -123,18 +123,26 @@ sequenceDiagram
 
 ## Host Interfaces
 
-A **host interface** is a SAI object (`SAI_OBJECT_TYPE_HOSTIF`) that connects a physical ASIC port to the Linux kernel. It involves two distinct components, and it is important to distinguish between them:
+Connecting a physical ASIC port to the Linux kernel involves two distinct components, and it is important to distinguish between them:
 
 | Term               | What it is                                 | Where it lives |
-|--------------------|--------------------------------------------|---|
-| **Host interface** | A SAI object — the ASIC-side handle        | SAI / ASIC layer |
+|--------------------|--------------------------------------------|----------------|
+| **Host interface** | A SAI object (`SAI_OBJECT_TYPE_HOSTIF`)    | SAI layer (vendor SDK inside syncd) |
 | **Netdev**         | A Linux network device (e.g., `Ethernet8`) | Linux kernel |
 
-Creating the SAI host interface *causes* the kernel netdev to appear — they are two views of the same thing. The host interface is the ASIC's side of the channel; the netdev is the Linux side.
+Host interface is the SAI-layer abstraction that defines the logical mapping between a netdev and a physical port. The netdev is the kernel-level device that daemons send and receive packets through.
 
 <img src="../pics/net-dev.png" alt="Host interface and netdev relationship" width="600">
 
-The diagram shows the three layers involved. User-space daemons (BGP, LLDP, etc.) communicate through the kernel netdevs. The ASIC driver and a dedicated **CPU port** bridge the kernel and the hardware. Each physical ASIC port has a corresponding netdev, but all control-plane traffic funnels through the single CPU port.
+The diagram shows four components across three layers:
+
+- **Port1–5** — the physical ASIC ports connected to actual cables.
+
+- **Ethernet1–5** — the Linux **netdevs**. User-space network daemons (BGP, LLDP, etc.) send and receive packets through these.
+
+- **ASIC Driver** — the kernel-level driver that bridges all the netdevs to the ASIC. It implements the netdev-to-port mapping defined by the host interface SAI object. When a **punted** packet arrives from the ASIC (ASIC → CPU), the driver delivers it to the correct netdev. In the reverse direction, when a daemon **injects** a packet through a netdev (CPU → ASIC), the driver routes it down to the matching port.
+
+- **CPU port** — the single funnel point between the kernel and the ASIC hardware. All control-plane traffic (punted packets going up, injected packets going down) passes through this one port, regardless of which physical port the traffic belongs to.
 
 ### How PortsOrch Creates Them
 
