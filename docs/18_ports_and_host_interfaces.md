@@ -15,7 +15,7 @@ Before the switch can do anything useful, it must first initialize its physical 
 
 `portsyncd` is the first process to start. Its job is simple but critical: read the port definitions from **CONFIG_DB** and republish them to **APPL_DB** so that `PortsOrch` can consume them.
 
-> The PORT table in CONFIG_DB is populated at boot time from the saved configuration file — see [How CONFIG_DB Is Populated at Boot](28_configuration_management.md#how-config_db-is-populated-at-boot).
+> The PORT table in CONFIG_DB is populated at boot time from the saved configuration file — see [How CONFIG_DB Is Populated at Boot](29_configuration_management.md#how-config_db-is-populated-at-boot).
 
 ```mermaid
 %%{init: {'sequence': {'mirrorActors': false}}}%%
@@ -195,7 +195,7 @@ However, there is a critical distinction between what *appears* on the netdev an
 
 **Data-plane traffic never touches host interfaces.** When the ASIC forwards packets at line rate — millions of packets per second — it does so entirely in hardware. Packets are matched against route entries, rewritten, and sent out egress ports without ever reaching the CPU or the Linux kernel.
 
-Only **control-plane traffic** — packets the ASIC deliberately redirects to the CPU — flows through the netdev. This includes ARP requests, BGP messages, LLDP, ICMP, and similar protocols that the switch must process locally. How the ASIC decides which packets to redirect, and how SONiC rate-limits them to protect the CPU, is covered in [Punting](20_punting.md).
+Only **control-plane traffic** — packets the ASIC deliberately redirects to the CPU — flows through the netdev. This includes ARP requests, BGP messages, LLDP, ICMP, and similar protocols that the switch must process locally. How the ASIC decides which packets to redirect, and how SONiC rate-limits them to protect the CPU, is covered in [Punting](21_punting.md).
 
 This means `tcpdump -i Ethernet96` captures **only control-plane traffic** — the millions of data-plane packets being forwarded at line rate through the same physical port are invisible because they never leave the ASIC.
 

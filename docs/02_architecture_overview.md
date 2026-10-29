@@ -26,7 +26,7 @@ These two terms describe how a network device divides its responsibilities:
 
 The relationship is straightforward: the control plane programs the data plane. SONiC's entire architecture — the databases, orchestration daemons, and hardware abstraction layers described in the rest of this document — exists to carry user intent from the control plane into the data plane as efficiently and reliably as possible.
 
-> For a deeper treatment including RIB, FIB, and how SONiC maps to traditional routing concepts, see [The BGP Container and FRR](21_bgp_container.md).
+> For a deeper treatment including RIB, FIB, and how SONiC maps to traditional routing concepts, see [The BGP Container and FRR](22_bgp_container.md).
 
 ## The Big Picture
 

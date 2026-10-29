@@ -1,6 +1,6 @@
 # Punting — Sending Packets from the ASIC to the CPU
 
-> **Prerequisites**: [Ports and Host Interfaces](18_ports_and_host_interfaces.md) — host interfaces and why data-plane traffic never reaches the CPU. [The Forwarding Chain](19_forwarding_chain.md) — the SAI forwarding object chain.
+> **Prerequisites**: [Ports and Host Interfaces](18_ports_and_host_interfaces.md) — host interfaces and why data-plane traffic never reaches the CPU. [The Forwarding Chain](19_forwarding_chain.md) — the SAI forwarding object chain. [Access Control Lists](20_acl.md) — ACL tables, rules, match fields, and the `COPY` action (used in [ACL-Based Trapping](#acl-based-trapping)).
 
 
 ## Fast Path vs Slow Path
@@ -490,6 +490,72 @@ All policers use `meter_type=packets`, `mode=sr_tcm`, `red_action=drop`. The `qu
 
 Operators can customize rates by applying a CONFIG_DB patch (which overrides the init file as described in [Config Merge and Override](#config-merge-and-override)) and running `config reload`.
 
+### Verifying Installed Traps
+
+After the CoPP pipeline runs, the installed traps are spread across three Redis databases. Checking each one manually is tedious, so this repository includes a helper script that queries all three and presents the result in a single report:
+
+```bash
+bash scripts/show_copp_traps.sh
+```
+
+> **Source:** [`scripts/show_copp_traps.sh`](../scripts/show_copp_traps.sh)
+
+The script produces three sections:
+
+**Section 1 — CoPP Policy (APPL_DB).** Shows the trap groups that `coppmgrd` published after merging the default `copp_cfg.json` with any CONFIG_DB overrides. Each row is one trap group with its queue assignment, punt action, member trap IDs, and policer rate. This is the **policy intent** — what the operator asked for.
+
+```
+TRAP GROUP          QUEUE  ACTION  TRAP IDs                                CIR (pps)   CBS (pkts)
+──────────────────  ─────  ──────  ──────────────────────────────────────  ──────────  ──────────
+default             0      -       -                                       600         600
+queue1_group1       1      trap    ip2me                                   6000        6000
+queue4_group1       4      trap    bgp,bgpv6,lacp                          6000        6000
+queue4_group2       4      copy    arp_req,arp_resp,neigh_discovery        600         600
+queue4_group3       4      trap    lldp,udld                               100         100
+```
+
+**Section 2 — Combined Trap View (ASIC_DB).** Shows the individual SAI trap objects that `CoppOrch` created in ASIC_DB — one row per SAI trap type, with the resolved queue, policer rate, and action. This is the **hardware reality** — what `syncd` will push (or has pushed) to the vendor SDK.
+
+```
+QUEUE  SAI TRAP TYPE                 ACTION  PRIO  CIR (pps)   CBS (pkts)  RED ACTION
+─────  ────────────────────────────  ──────  ────  ──────────  ──────────  ──────────
+Q4     ARP_REQUEST                   COPY    4     600         600         DROP
+Q4     ARP_RESPONSE                  COPY    4     600         600         DROP
+Q4     BGP                           TRAP    4     6000        6000        DROP
+Q4     BGPV6                         TRAP    4     6000        6000        DROP
+Q4     IPV6_NEIGHBOR_DISCOVERY       COPY    4     600         600         DROP
+Q4     LACP                          TRAP    4     6000        6000        DROP
+Q4     LLDP                          TRAP    4     100         100         DROP
+Q4     UDLD                          TRAP    4     100         100         DROP
+
+Q1     IP2ME                         TRAP    1     6000        6000        DROP
+
+Q0     TTL_ERROR                     TRAP    0     600         600         DROP
+```
+
+Notice that Section 1 has 5 groups but Section 2 has 10 SAI trap objects — each group expands its `trap_ids` into individual SAI traps (e.g., the `arp` group with `arp_req,arp_resp,neigh_discovery` becomes three separate SAI objects). Also notice that `TTL_ERROR` appears in Section 2 but not in Section 1: `CoppOrch` hardcodes it onto the switch's default trap group at startup, bypassing `coppmgrd` entirely, so TTL errors are always trapped regardless of the JSON configuration.
+
+**Section 3 — Installation Status (STATE_DB).** Lists every individual trap ID that was expected to be programmed — those that passed [feature gating](#feature-gating) and were published to APPL_DB. Each row is one trap ID with its STATE_DB confirmation. Trap IDs whose features are disabled are summarized separately at the bottom.
+
+```
+  TRAP ID                         STATUS
+  ──────────────────────────────  ──────────
+  arp_req                         ok
+  arp_resp                        ok
+  bgp                             ok
+  bgpv6                           ok
+  ip2me                           ok
+  lacp                            ok
+  lldp                            ok
+  neigh_discovery                 ok
+  ttl_error                       ok
+  udld                            ok
+
+  Disabled (feature not enabled): dest_nat_miss, dhcp, dhcpv6, eapol, sample_packet, src_nat_miss
+```
+
+The 6 disabled trap IDs (`dest_nat_miss`, `dhcp`, `dhcpv6`, `eapol`, `sample_packet`, `src_nat_miss`) never reached APPL_DB or ASIC_DB because their corresponding features (NAT, DHCP relay, MACsec, sFlow) are not enabled on this switch.
+
 ### Trap Counters
 
 `CoppOrch` binds a SAI generic counter to each trap object via `SAI_HOSTIF_TRAP_ATTR_COUNTER_ID` and registers it with the flex counter infrastructure. This populates `COUNTERS_TRAP_NAME_MAP` in COUNTERS_DB, enabling per-trap packet and byte counters. The counters are polled every 10 seconds by default.
@@ -546,4 +612,4 @@ An operator creates an ACL table and rule in CONFIG_DB:
 
 ---
 
-**Previous**: [← The Forwarding Chain](19_forwarding_chain.md) · **Next**: [The BGP Container and FRR →](21_bgp_container.md)
+**Previous**: [← Access Control Lists](20_acl.md) · **Next**: [The BGP Container and FRR →](22_bgp_container.md)
