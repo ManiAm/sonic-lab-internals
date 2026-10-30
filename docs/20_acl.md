@@ -5,74 +5,70 @@
 
 ## What Is an ACL?
 
-An Access Control List (ACL) is an ordered set of rules that the switch evaluates against every packet passing through a specific point in the forwarding pipeline. Each rule specifies **match criteria** (which packets to select) and an **action** (what to do with them). The switch tests rules from highest priority to lowest — the first match wins, and its action is applied.
+An Access Control List (ACL) is an ordered set of rules evaluated against packets at a specific enforcement point. Each rule specifies **match criteria** (which packets to select) and an **action** (what to do with them). Rules are evaluated by priority — **higher priority wins** — and only the action from the highest-priority match is applied.
 
-ACLs serve three broad purposes:
-
-- **Security** — block unwanted traffic. For example, drop all inbound packets from a known-bad source prefix, or permit SSH only from a management subnet.
-
-- **Traffic steering** — redirect or copy specific flows. For example, mirror all traffic matching a 5-tuple (source IP, destination IP, source port, destination port, and protocol) to a monitoring port for analysis.
-
-- **QoS marking** — reclassify packets. For example, remark the DSCP (Differentiated Services Code Point) value of traffic from a specific application so downstream QoS policies treat it at the correct priority.
-
-Without ACLs, the switch would forward every packet that has a valid route — there would be no mechanism to enforce security policy, selectively mirror traffic, or override QoS markings in the data plane.
+<img src="../pics/acl_example.png" alt="segment" width="850">
 
 
 ## Two ACL Domains in SONiC
 
-SONiC implements ACLs in two fundamentally different domains, each protecting a different part of the system:
+SONiC implements ACLs in two distinct domains — **data-plane** and **control-plane** — each operating at a different enforcement point. The sections below cover each domain in detail.
 
-|                          | Data-Plane ACLs                                                 | Control-Plane ACLs                         |
-|--------------------------|-----------------------------------------------------------------|--------------------------------------------|
-| **What they protect**    | The forwarding pipeline — traffic transiting through the switch | The Linux network stack — traffic destined for the CPU |
-| **Where rules execute**  | In the ASIC hardware (TCAM)                                     | In the Linux kernel (iptables / ip6tables) |
-| **Programmed by**        | `AclOrch` via SAI                                               | `caclmgrd` via iptables commands |
-| **CONFIG_DB table type** | `L3`, `L3V6`, `MIRROR`, etc.                                    | `CTRLPLANE`                      |
-| **Performance**          | Line rate — millions of packets per second                      | Software rate — thousands of packets per second |
-| **TCAM usage**           | Yes — each rule consumes a TCAM entry                           | No — kernel netfilter, no ASIC resources |
+|                          | Data-Plane ACLs                                   | Control-Plane ACLs                         |
+|--------------------------|---------------------------------------------------|--------------------------------------------|
+| **What they protect**    | Transit traffic flowing through the switch        | Traffic destined for the switch's CPU |
+| **Where rules execute**  | In the ASIC hardware (TCAM)                       | In the Linux kernel (iptables / ip6tables) |
+| **Programmed by**        | `AclOrch` via SAI                                 | `caclmgrd` via iptables commands |
+| **CONFIG_DB table type** | `L3`, `L3V6`, `MIRROR`, etc.                      | `CTRLPLANE`                      |
+| **Performance**          | Line rate — millions of packets per second        | Software rate — thousands of packets per second |
+| **TCAM usage**           | Yes — each rule consumes a TCAM entry             | No — kernel netfilter, no ASIC resources |
 
-The two domains complement each other. Data-plane ACLs filter transit traffic at wire speed inside the ASIC. Control-plane ACLs protect the switch's own management services (SSH, SNMP, BGP) from unauthorized access — filtering by source address, which is something [CoPP](21_punting.md#copp--control-plane-policing) cannot do (CoPP rate-limits punted traffic but does not distinguish by source).
+The two domains complement each other. Data-plane ACLs filter transit traffic at wire speed inside the ASIC. Control-plane ACLs protect the switch's own management services (SSH, SNMP, BGP) from unauthorized access by filtering on source address.
 
 
 ## Data-Plane ACLs
 
-Data-plane ACLs are the primary focus of this document. They are programmed into the ASIC's TCAM and evaluate packets at line rate as part of the hardware forwarding pipeline.
+Data-plane ACLs are the primary focus of this document. They are programmed directly into the ASIC and evaluate **transit traffic** — packets flowing through the switch from one port to another — entirely in hardware at line rate. Without data-plane ACLs, the forwarding pipeline has no policy enforcement: every packet with a valid route is forwarded unconditionally, with no ability to filter, mirror, redirect, or reclassify traffic.
 
-### TCAM — Where ACL Rules Live
+Common use cases:
 
-ACL rules are stored in the ASIC's **TCAM** (Ternary Content-Addressable Memory) — a special on-chip memory that compares a packet header against all stored rules in parallel and returns the highest-priority match in a single clock cycle. This is what makes line-rate ACL evaluation possible. For a general introduction to TCAM and how it compares to other memory types (SRAM, DRAM, Binary CAM), see [Appendix A — Memory Types](A1_memory_types.md#ternary-cam-tcam).
+- **Security filtering** — drop transit traffic from a known-bad source prefix, or block specific protocols (e.g., deny all HTTP/HTTPS from a compromised subnet).
+- **Traffic mirroring** — copy specific flows to a monitoring port for analysis, using ERSPAN or local SPAN sessions.
+- **Traffic redirect** — steer packets matching a policy to a different next hop, enabling policy-based routing.
+- **QoS remarking** — remark the DSCP (Differentiated Services Code Point) value of traffic entering the network so downstream devices apply the correct priority.
+- **Punting custom traffic** — send a copy of matched packets to the CPU for software processing (using the `COPY` action — see [ACL-Based Trapping](21_punting.md#acl-based-trapping)).
 
-**Practical implications for SONiC ACL operators:**
+### Where Data-Plane ACLs Operate
 
-- **TCAM is a finite, shared resource.** ACLs, LPM (Longest Prefix Match) routes, host routes, and some internal system rules all compete for the same TCAM banks. The partitioning between these features is typically fixed at boot based on the platform's SAI profile and cannot be changed at runtime.
+A packet entering the switch passes through a series of hardware stages inside the ASIC. Data-plane ACLs can be applied at up to three points in this pipeline:
 
-- **Entry size varies by match key.** Every ACL rule consumes one or more TCAM entries. Rules with wider match keys consume more space — on some platforms, IPv6 rules take twice the TCAM entries of IPv4 rules because IPv6 addresses are 128 bits vs. IPv4's 32 bits.
+<img src="../pics/data-plane-acl.png" alt="segment" width="850">
 
-- **Resource exhaustion is possible.** If an operator installs too many ACL rules, the ASIC runs out of TCAM entries and new rules fail to program. `AclOrch` handles this gracefully — when `sai_acl_api->create_acl_entry()` returns a resource-exhaustion error, the rule is parked in a retry cache and automatically re-attempted when other rules are removed and TCAM space is freed.
+Each evaluation point corresponds to a SAI ACL stage:
 
-- **SONiC monitors TCAM usage via CRM** (Critical Resource Monitoring). `CrmOrch` periodically queries `SAI_ACL_TABLE_ATTR_AVAILABLE_ACL_ENTRY` for each ACL table and publishes used/available counts to COUNTERS_DB. If usage crosses a configurable threshold (default: 85%), CRM logs a warning. Operators can check usage with:
+| Stage | SAI Constant | Position in Pipeline | Typical Use |
+|-------|-------------|---------------------|-------------|
+| **Pre-Ingress** | `SAI_ACL_STAGE_PRE_INGRESS` | Before L2/L3 forwarding lookup | Early classification — match on DSCP or other header fields to override VRF before routing decides the next hop. Bound to the switch as a whole, not individual ports. |
+| **Ingress** | `SAI_ACL_STAGE_INGRESS` | In the ingress pipeline, typically after L2/L3 forwarding lookup (see note below) | The primary ACL stage — security filtering, mirroring, redirect. The most commonly used stage. |
+| **Egress** | `SAI_ACL_STAGE_EGRESS` | In the egress pipeline, after queuing and before the packet is transmitted | Egress filtering, DSCP remarking. More limited actions than ingress on most platforms. |
 
-    ```bash
-    crm show resources acl table   # TCAM entries used/available per table
-    crm show resources acl group   # ACL table groups used/available
-    ```
+> **ASIC-specific ordering.** The diagram shows a common pipeline order found on major platforms (Broadcom, Cisco, etc.) where the ingress ACL runs after L2/L3 forwarding lookup. However, the exact position of the ingress ACL relative to L2/L3 lookup is ASIC-specific — SAI abstracts this away. What is consistent across all platforms: pre-ingress ACLs always run before forwarding lookup, and egress ACLs always run in the egress pipeline after the packet crosses the switch fabric.
 
-With this hardware context in mind, the following sections walk through how an operator defines ACL rules in SONiC and how they are programmed into the ASIC.
+Not every ASIC supports all three stages. Pre-ingress is not universally available. The supported stages and their available actions vary by vendor — `AclOrch` queries these capabilities via `queryAclActionCapability()` at startup and publishes them to the `SWITCH_CAPABILITY|switch` table in STATE_DB.
 
 ### CONFIG_DB Schema
 
-An operator defines data-plane ACLs using two CONFIG_DB tables:
+An operator defines data-plane ACLs using two CONFIG_DB tables — an **ACL table** that defines where the ACL applies, and **ACL rules** that define what to match and what to do.
 
-**`ACL_TABLE`** — defines the table container:
+**`ACL_TABLE`** — defines the table container. Suppose a network operator wants to block HTTP and HTTPS traffic from `10.99.0.0/16` (a compromised subnet) on two uplink ports:
 
 ```json
 {
     "ACL_TABLE": {
-        "DATAACL": {
+        "BLOCK_BAD_SUBNET": {
             "type": "L3",
             "stage": "ingress",
-            "policy_desc": "Data plane ACL for security",
-            "ports": ["Ethernet0", "Ethernet4", "PortChannel01"]
+            "ports": ["Ethernet0", "Ethernet4"]
         }
     }
 }
@@ -81,33 +77,56 @@ An operator defines data-plane ACLs using two CONFIG_DB tables:
 | Field         | Description |
 |---------------|-------------|
 | `type`        | The table type — determines which match fields and actions are available (see [Table Types](#table-types)) |
-| `stage`       | Pipeline stage: `ingress`, `egress`, or `pre_ingress` |
+| `stage`       | Pipeline stage: `ingress`, `egress`, or `pre_ingress` (see [Where Data-Plane ACLs Operate](#where-data-plane-acls-operate)) |
 | `ports`       | List of ports or port-channels the table is bound to |
 | `policy_desc` | Optional human-readable description |
 
-**`ACL_RULE`** — defines individual rules within a table:
+This table is type `L3` (IPv4 match fields), bound to `Ethernet0` and `Ethernet4` at the `ingress` stage — the ASIC evaluates its rules when packets enter those ports.
+
+**`ACL_RULE`** — defines individual rules within a table. The key format is `<table_name>|<rule_name>`. Each rule specifies a numeric priority (higher values take precedence), one or more match fields, and an action. Continuing the example above — block HTTP/HTTPS from the compromised subnet, allow everything else:
 
 ```json
 {
     "ACL_RULE": {
-        "DATAACL|RULE_10": {
-            "PRIORITY": "10",
-            "SRC_IP": "10.0.0.0/8",
-            "DST_IP": "192.168.1.0/24",
+        "BLOCK_BAD_SUBNET|RULE_100": {
+            "PRIORITY": "100",
+            "SRC_IP": "10.99.0.0/16",
             "IP_PROTOCOL": "6",
             "L4_DST_PORT": "80",
             "PACKET_ACTION": "DROP"
         },
-        "DATAACL|RULE_20": {
-            "PRIORITY": "20",
-            "SRC_IP": "172.16.0.0/12",
+        "BLOCK_BAD_SUBNET|RULE_90": {
+            "PRIORITY": "90",
+            "SRC_IP": "10.99.0.0/16",
+            "IP_PROTOCOL": "6",
+            "L4_DST_PORT": "443",
+            "PACKET_ACTION": "DROP"
+        },
+        "BLOCK_BAD_SUBNET|RULE_1": {
+            "PRIORITY": "1",
             "PACKET_ACTION": "FORWARD"
         }
     }
 }
 ```
 
-The key format is `<table_name>|<rule_name>`. Each rule specifies a priority (higher wins), one or more match fields, and an action.
+The three rules define a priority order:
+
+| Priority      | What it matches                         | Action  |
+|---------------|-----------------------------------------|---------|
+| 100 (highest) | `10.99.0.0/16` → TCP/80 (HTTP)          | DROP    |
+| 90            | `10.99.0.0/16` → TCP/443 (HTTPS)        | DROP    |
+| 1 (lowest)    | Everything (no match fields = wildcard) | FORWARD |
+
+When a packet arrives on Ethernet0, the ASIC compares it against all three rules **in parallel**. All matching rules are found simultaneously, and the **highest-priority match wins**:
+
+- A packet from `10.99.0.1` to TCP port 80 matches RULE_100 **and** RULE_1. Priority 100 wins → **dropped**.
+- A packet from `172.16.1.1` to TCP port 80 only matches RULE_1 → **forwarded**.
+- A packet from `10.99.0.1` to TCP port 22 (SSH) only matches RULE_1 → **forwarded** (only HTTP/HTTPS is blocked).
+
+The lowest-priority rule typically serves as a **catch-all** — a wildcard rule with no match fields that applies to any packet not matched by a higher-priority rule. The catch-all defines the table's default policy: `FORWARD` (permit everything not explicitly denied) or `DROP` (deny everything not explicitly permitted). In this example, RULE_1 at priority 1 forwards all traffic that the two drop rules above it do not match.
+
+> **Note:** If no rule matches at all — including no catch-all — the default behavior is platform-dependent. Most ASICs implicitly drop unmatched traffic within an ACL table, which is why an explicit catch-all is recommended.
 
 ### Table Types
 
@@ -128,18 +147,6 @@ Each ACL table has a **type** that defines which match fields and actions the ta
 > **Custom table types.** Operators can define their own table types via the `ACL_TABLE_TYPE` CONFIG_DB table, specifying arbitrary combinations of match fields, actions, and bind point types. `AclOrch` processes these through `doAclTableTypeTask()`.
 
 Some table types are platform-dependent. For example, `L3V4V6` (combined IPv4/IPv6 in a single table) is only supported on Marvell Memory, XS, CLX, and virtual switch platforms. On other platforms, operators must use separate `L3` and `L3V6` tables. `AclOrch` queries these capabilities at startup and publishes them to STATE_DB.
-
-### Pipeline Stages
-
-ACL tables operate at one of three points in the forwarding pipeline:
-
-| Stage | SAI Constant | When it runs |
-|-------|-------------|-------------|
-| **Ingress** | `SAI_ACL_STAGE_INGRESS` | After the ingress parser but before forwarding lookup — the most common stage for security ACLs |
-| **Egress** | `SAI_ACL_STAGE_EGRESS` | After the forwarding decision, before the packet leaves the egress port — used for egress filtering or DSCP remarking |
-| **Pre-ingress** | `SAI_ACL_STAGE_PRE_INGRESS` | Before the main ingress pipeline — used for early classification before standard L2/L3 processing |
-
-Not every ASIC supports all three stages. The available stages and their supported actions vary by vendor — `AclOrch` queries these capabilities via `queryAclActionCapability()` at startup.
 
 ### Match Fields
 
@@ -207,25 +214,29 @@ Port / LAG / Switch            (bind point — where ACLs attach)
 
 `AclOrch` subscribes to **both** CONFIG_DB and APPL_DB for ACL tables and rules. This dual-source design allows ACLs to come from the operator (CONFIG_DB) or from applications like PBH (Policy-Based Hashing) via APPL_DB:
 
-```
-CONFIG_DB                          APPL_DB
-  ACL_TABLE_TYPE ─┐                  ACL_TABLE_TYPE ─┐
-  ACL_TABLE ──────┤                  ACL_TABLE ──────┤
-  ACL_RULE ───────┘                  ACL_RULE ───────┘
-                   ╲                               ╱
-                    ╲                             ╱
-                     ▼                           ▼
-                          AclOrch (orchagent)
-                                │
-                           SAI ACL API
-                                │
-                            ASIC_DB
-                                │
-                              syncd
-                                │
-                           Vendor SDK
-                                │
-                               ASIC
+```mermaid
+%%{init: {'sequence': {'mirrorActors': false}}}%%
+sequenceDiagram
+    participant CFG as CONFIG_DB
+    participant APP as APPL_DB
+    participant AO as AclOrch
+    participant SAI as SAI ACL API
+    participant ADB as ASIC_DB
+    participant SYN as syncd
+    participant SDK as Vendor SDK
+    participant ASIC as ASIC
+
+    CFG->>AO: ACL_TABLE / ACL_RULE / ACL_TABLE_TYPE
+    APP->>AO: ACL_TABLE / ACL_RULE / ACL_TABLE_TYPE
+
+    Note over AO: parse table attrs, resolve type,<br/>validate match fields and actions
+
+    AO->>SAI: create_acl_table()
+    AO->>SAI: create_acl_entry()
+    SAI->>ADB: serialize SAI objects
+    ADB->>SYN: notify
+    SYN->>SDK: program hardware
+    SDK->>ASIC: install ACL entries
 ```
 
 When `AclOrch` processes a new ACL table entry, it walks the SAI object hierarchy described above:
@@ -253,14 +264,42 @@ Operators can view per-rule hit counts using:
 aclshow -a          # show all ACL rules with hit counts
 ```
 
+### TCAM — Where ACL Rules Live
+
+As shown in the evaluation walkthrough above, the ASIC compares a packet against all rules in a table simultaneously — not one by one. This parallel evaluation is possible because ACL rules are stored in **TCAM** (Ternary Content-Addressable Memory), a special on-chip memory designed for exactly this purpose. Unlike conventional memory (SRAM, DRAM), where a lookup requires an address, TCAM takes a packet header as input and compares it against every stored entry at once, returning the highest-priority match in a single clock cycle. This is what enables ACL evaluation at line rate without slowing down the forwarding pipeline. For a deeper look at TCAM and how it compares to other memory types, see [Appendix A — Memory Types](A1_memory_types.md#ternary-cam-tcam).
+
+**Practical implications for SONiC ACL operators:**
+
+- **TCAM is a finite, shared resource.** ACLs, LPM (Longest Prefix Match) routes, host routes, and some internal system rules all compete for the same TCAM banks. The partitioning between these features is typically fixed at boot based on the platform's SAI profile and cannot be changed at runtime.
+
+- **Entry size varies by match key.** Every ACL rule consumes one or more TCAM entries. Rules with wider match keys consume more space — on some platforms, IPv6 rules take twice the TCAM entries of IPv4 rules because IPv6 addresses are 128 bits vs. IPv4's 32 bits.
+
+- **Resource exhaustion is possible.** If an operator installs too many ACL rules, the ASIC runs out of TCAM entries and new rules fail to program. `AclOrch` handles this gracefully — when `sai_acl_api->create_acl_entry()` returns a resource-exhaustion error, the rule is parked in a retry cache and automatically re-attempted when other rules are removed and TCAM space is freed.
+
+- **SONiC monitors TCAM usage via CRM** (Critical Resource Monitoring). `CrmOrch` periodically queries `SAI_ACL_TABLE_ATTR_AVAILABLE_ACL_ENTRY` for each ACL table and publishes used/available counts to COUNTERS_DB. If usage crosses a configurable threshold (default: 85%), CRM logs a warning. Operators can check usage with:
+
+    ```bash
+    crm show resources acl table   # TCAM entries used/available per table
+    crm show resources acl group   # ACL table groups used/available
+    ```
+
+With this hardware context in mind, the following sections walk through how an operator defines ACL rules in SONiC and how they are programmed into the ASIC.
+
 
 ## Control-Plane ACLs (caclmgrd)
 
-Control-plane ACLs protect the switch's own management services — SSH, SNMP, NTP, and others — by filtering traffic destined for the CPU's Linux network stack. Unlike data-plane ACLs, these rules are **not** programmed into the ASIC. They are implemented as Linux `iptables` and `ip6tables` rules running in the kernel.
+Control-plane ACLs protect the switch's own management services — SSH, SNMP, NTP, and others — by filtering traffic destined for the CPU's Linux network stack. Without them, the switch would accept every connection to its management services — there would be no way to control which sources can reach the CPU. Unlike data-plane ACLs, these rules are **not** programmed into the ASIC. They are implemented as Linux `iptables` and `ip6tables` rules running in the kernel.
 
-### Why a Separate Mechanism?
+Common use cases:
 
-[CoPP](21_punting.md#copp--control-plane-policing) rate-limits punted traffic inside the ASIC to prevent CPU overload, but it does not perform source-based filtering — it cannot express a policy like "allow SSH only from 10.0.0.0/8." That kind of per-source, per-service access control requires inspecting the packet after it arrives at the CPU, which is exactly what `iptables` does. Control-plane ACLs fill this gap.
+- **SSH access control** — allow SSH connections only from the management subnet, dropping all other sources.
+- **SNMP restriction** — limit SNMP queries to authorized monitoring servers.
+- **NTP protection** — restrict NTP synchronization to trusted time servers only.
+- **General service lockdown** — block unauthorized access to any management service listening on the CPU.
+
+### Why Not Just Use CoPP?
+
+Control-plane ACLs fill a gap that [CoPP](21_punting.md#copp--control-plane-policing) cannot. CoPP rate-limits punted traffic inside the ASIC — it can slow down a flood of ARP or BGP packets — but it treats all sources equally. It cannot express a policy like "allow SSH only from 10.0.0.0/8." That kind of per-source access control requires inspecting the packet after it reaches the CPU, which is exactly what control-plane ACLs do.
 
 ### How caclmgrd Works
 
