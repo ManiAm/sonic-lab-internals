@@ -140,13 +140,13 @@ Each ACL table has a **type** that defines which match fields and actions the ta
 | `MIRROR` | Same as L3 | IPv4 traffic mirroring to an ERSPAN (Encapsulated Remote Switched Port Analyzer) session |
 | `MIRRORV6` | Same as L3V6 | IPv6 traffic mirroring |
 | `MIRROR_DSCP` | DSCP | Mirror traffic based on DSCP value |
-| `PFCWD` | TC (traffic class) | PFC watchdog — drop or forward PFC-stormed queues |
-| `MCLAG` | Same as L3 | MCLAG-specific filtering |
+| `PFCWD` | TC (traffic class) | PFC (Priority Flow Control) watchdog — drop or forward PFC-stormed queues |
+| `MCLAG` | Same as L3 | MCLAG (Multi-Chassis Link Aggregation Group) specific filtering |
 | `DROP` | L3 + L3V6 fields, IN/OUT ports | Explicit drop rules |
 
 > **Custom table types.** Operators can define their own table types via the `ACL_TABLE_TYPE` CONFIG_DB table, specifying arbitrary combinations of match fields, actions, and bind point types. `AclOrch` processes these through `doAclTableTypeTask()`.
 
-Some table types are platform-dependent. For example, `L3V4V6` (combined IPv4/IPv6 in a single table) is only supported on Marvell Memory, XS, CLX, and virtual switch platforms. On other platforms, operators must use separate `L3` and `L3V6` tables. `AclOrch` queries these capabilities at startup and publishes them to STATE_DB.
+Some table types are platform-dependent. For example, `L3V4V6` (combined IPv4/IPv6 in a single table) is only supported on Marvell Prestera, Marvell Teralynx, and virtual switch platforms. On other platforms, operators must use separate `L3` and `L3V6` tables. `AclOrch` queries these capabilities at startup and publishes them to STATE_DB.
 
 ### Match Fields
 
@@ -173,21 +173,100 @@ Port ranges are implemented using **SAI ACL range objects** (`sai_acl_range_t`),
 
 ### Actions
 
-Each rule has exactly one primary action:
+Each ACL rule carries a **`PACKET_ACTION`** field that determines what happens to a matched packet. `AclOrch` recognizes three values (defined in `aclPacketActionLookup`):
 
-| SONiC Action | SAI Constant | Effect |
-|-------------|-------------|--------|
-| `FORWARD` | `SAI_PACKET_ACTION_FORWARD` | Permit the packet (continue forwarding) |
-| `DROP` | `SAI_PACKET_ACTION_DROP` | Silently discard the packet |
-| `COPY` | `SAI_PACKET_ACTION_COPY` | Send a copy to the CPU while forwarding the original (see [ACL-Based Trapping](21_punting.md#acl-based-trapping)) |
-| `REDIRECT` | `SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT` | Redirect to a specific next hop, next-hop group, or port |
-| `DO_NOT_NAT` | — | Exempt the packet from NAT (Network Address Translation) processing |
+| `PACKET_ACTION` | SAI Constant                | Effect |
+|-----------------|-----------------------------|--------|
+| `FORWARD`       | `SAI_PACKET_ACTION_FORWARD` | Permit the packet (continue forwarding) |
+| `DROP`          | `SAI_PACKET_ACTION_DROP`    | Silently discard the packet |
+| `COPY`          | `SAI_PACKET_ACTION_COPY`    | Send a copy to the CPU while forwarding the original (see [ACL-Based Trapping](21_punting.md#acl-based-trapping)) |
 
-Additional actions can be combined with the primary action:
+In addition to `PACKET_ACTION`, a rule can specify **independent action fields** — each handled through a separate SAI attribute:
 
-- **Mirror** (`MIRROR_ACTION`, `MIRROR_INGRESS_ACTION`, `MIRROR_EGRESS_ACTION`) — copy the packet to a mirror session (ERSPAN or local SPAN).
-- **DSCP remarking** (`DSCP_ACTION`) — set a new DSCP value on the packet.
-- **Counter** (`COUNTER`) — enable per-rule hit counting (enabled by default for most rule types).
+| Action Field | SAI Attribute | Effect |
+|--------------|--------------------------------------|--------|
+| `REDIRECT_ACTION` | `SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT` | Redirect to a specific next hop, next-hop group, or port |
+| `DO_NOT_NAT_ACTION` | `SAI_ACL_ENTRY_ATTR_ACTION_NO_NAT` | Exempt the packet from NAT (Network Address Translation) processing |
+| `MIRROR_INGRESS_ACTION` / `MIRROR_EGRESS_ACTION` | `SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_INGRESS` / `_EGRESS` | Copy the packet to a mirror session (ERSPAN or local SPAN) |
+| `DSCP_ACTION` | `SAI_ACL_ENTRY_ATTR_ACTION_SET_DSCP` | Set a new DSCP value on the packet |
+| `META_DATA_ACTION` | `SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA` | Attach metadata to the packet for downstream processing |
+| `DISABLE_TRIM_ACTION` | `SAI_ACL_ENTRY_ATTR_ACTION_PACKET_TRIM_DISABLE` | Prevent the ASIC from trimming the packet |
+| `COUNTER` | `SAI_ACL_ENTRY_ATTR_ACTION_COUNTER` | Enable per-rule hit counting (enabled by default for most rule types) |
+
+These fields can be **combined** in a single rule. For example, a rule can forward a packet **and** mirror it — simultaneously:
+
+```json
+"EXAMPLE_TABLE|RULE_50": {
+    "PRIORITY": "50",
+    "SRC_IP": "10.0.0.0/8",
+    "PACKET_ACTION": "FORWARD",
+    "MIRROR_INGRESS_ACTION": "mirror_session_1"
+}
+```
+
+This rule forwards all traffic from `10.0.0.0/8` and sends a copy to the mirror session.
+
+> **Note on `DSCP_ACTION`.** Although `DSCP_ACTION` is a valid ACL action field, it is **not** supported on standard `L3` or `MIRROR` table types. It requires the `UNDERLAY_SET_DSCP` table type, which uses a metadata-based two-stage pipeline internally (see [When to Use Which](#data-plane-vs-control-plane-when-to-use-which)).
+
+### Vendor CLI Example
+
+Upstream SONiC does not include an IOS-style CLI for ACL configuration — operators use `acl-loader` (JSON files) or write to CONFIG_DB directly. Most commercial SONiC distributions add a traditional CLI on top. The example below uses **Dell Enterprise SONiC** (`sonic-cli`), representative of the CLI available across Enterprise SONiC platforms (Supermicro, Celestica, etc.).
+
+Create an ACL that blocks all traffic from a specific subnet, blocks Telnet (TCP/23) from any source, and permits everything else — then bind it to an interface:
+
+```
+sonic(config)# ip access-list EDGE_FILTER
+sonic(config-ipv4-acl)# seq 10 deny ip 192.168.1.0/24 any
+sonic(config-ipv4-acl)# seq 20 deny tcp any any eq 23
+sonic(config-ipv4-acl)# seq 30 permit ip any any
+sonic(config-ipv4-acl)# exit
+
+sonic(config)# interface Ethernet0
+sonic(config-if-Ethernet0)# ip access-group EDGE_FILTER in
+```
+
+The same policy expressed directly in CONFIG_DB (upstream SONiC):
+
+```json
+{
+    "ACL_TABLE": {
+        "EDGE_FILTER": {
+            "type": "L3",
+            "stage": "ingress",
+            "ports": ["Ethernet0"]
+        }
+    },
+    "ACL_RULE": {
+        "EDGE_FILTER|DENY_SUBNET": {
+            "PRIORITY": "100",
+            "SRC_IP": "192.168.1.0/24",
+            "PACKET_ACTION": "DROP"
+        },
+        "EDGE_FILTER|DENY_TELNET": {
+            "PRIORITY": "90",
+            "IP_PROTOCOL": "6",
+            "L4_DST_PORT": "23",
+            "PACKET_ACTION": "DROP"
+        },
+        "EDGE_FILTER|ALLOW_ALL": {
+            "PRIORITY": "1",
+            "PACKET_ACTION": "FORWARD"
+        }
+    }
+}
+```
+
+**Key differences:**
+
+|                       | Vendor CLI                                         | CONFIG_DB                                      |
+|-----------------------|----------------------------------------------------|------------------------------------------------|
+| **Rule ordering**     | `seq` — lower number is evaluated first            | `PRIORITY` — higher value takes precedence     |
+| **Action keywords**   | `permit` / `deny`                                  | `FORWARD` / `DROP`                             |
+| **Table definition**  | `ip access-list <name>` (implicit `L3` type)       | Explicit `type`, `stage`, and `ports` fields   |
+| **Interface binding** | `ip access-group <name> in` under interface config | `ports` list in the `ACL_TABLE` entry          |
+| **Implicit deny**     | Implicit deny-all appended at end of list          | No implicit rule — explicit catch-all required |
+
+> **Sequence numbers vs PRIORITY.** The ordering convention is inverted. In the CLI, `seq 10` is evaluated before `seq 20` — lower number means higher effective priority. In CONFIG_DB, `PRIORITY 100` is evaluated before `PRIORITY 90` — higher number means higher priority. Both achieve the same result; the vendor CLI translates between the two conventions automatically.
 
 ### SAI ACL Object Model
 
@@ -283,12 +362,24 @@ As shown in the evaluation walkthrough above, the ASIC compares a packet against
     crm show resources acl group   # ACL table groups used/available
     ```
 
-With this hardware context in mind, the following sections walk through how an operator defines ACL rules in SONiC and how they are programmed into the ASIC.
-
 
 ## Control-Plane ACLs (caclmgrd)
 
-Control-plane ACLs protect the switch's own management services — SSH, SNMP, NTP, and others — by filtering traffic destined for the CPU's Linux network stack. Without them, the switch would accept every connection to its management services — there would be no way to control which sources can reach the CPU. Unlike data-plane ACLs, these rules are **not** programmed into the ASIC. They are implemented as Linux `iptables` and `ip6tables` rules running in the kernel.
+Control-plane ACLs protect the switch's own management services — SSH, SNMP, NTP, and others — by filtering traffic destined for the CPU's Linux network stack. Unlike data-plane ACLs, these rules are **not** programmed into the ASIC. They are implemented as Linux `iptables` and `ip6tables` rules running in the kernel.
+
+<img src="../pics/control-plane-acl.png" alt="segment" width="850">
+
+Traffic reaches the CPU through two paths:
+
+- **In-band (punted traffic)** — packets entering through front-panel ports that the ASIC's trap rules redirect to the CPU. This traffic passes through the [CoPP policer](21_punting.md#copp--control-plane-policing) inside the ASIC before reaching the kernel. Examples: BGP updates from a peer, in-band SSH to the switch's loopback IP.
+
+- **Out-of-band (management port)** — packets arriving on the dedicated management interface (`eth0`), which is wired directly to the CPU and bypasses the ASIC entirely. Examples: SSH from the management network, SNMP polling from a monitoring server.
+
+Both paths converge at the Linux kernel's **Netfilter** framework. Netfilter is the packet filtering subsystem built into the kernel — `iptables` (IPv4) and `ip6tables` (IPv6) are the user-space tools that configure its rules. `caclmgrd` uses these tools to install control-plane ACL rules into Netfilter's **INPUT** chain, which filters all packets destined for the local host — regardless of whether they arrived via the ASIC or the management port.
+
+> **Note:** Netfilter operates at L3 (IPv4/IPv6). L2 packets such as LLDP, LACP, and ARP are delivered directly to their respective daemons and are **not** filtered by control-plane ACLs.
+
+Without control-plane ACLs, the switch would accept every connection to its management services — there would be no way to control which sources can reach the CPU. CoPP can rate-limit floods, but it cannot distinguish between authorized and unauthorized sources (see [Why Not Just Use CoPP?](#why-not-just-use-copp) below).
 
 Common use cases:
 
@@ -338,6 +429,8 @@ A control-plane ACL table uses `"type": "CTRLPLANE"` and adds a `services` field
 }
 ```
 
+> **`ACCEPT` vs `FORWARD`.** Control-plane ACL rules use `ACCEPT` and `DROP` as `PACKET_ACTION` values — not `FORWARD` and `DROP` like data-plane ACLs. This is because `caclmgrd` passes the action directly to `iptables` as a jump target (`-j ACCEPT` or `-j DROP`), and `ACCEPT` is the standard iptables keyword for permitting a packet. Data-plane ACLs use `FORWARD` because `AclOrch` maps it to the SAI constant `SAI_PACKET_ACTION_FORWARD`.
+
 The `services` field maps to `caclmgrd`'s built-in service definitions, which supply the default IP protocol and destination port:
 
 | Service | Protocol | Port(s) |
@@ -373,11 +466,13 @@ On multi-ASIC platforms, `caclmgrd` generates additional NAT rules — DNAT (Des
 |----------|-----|
 | Block transit traffic from a source prefix | Data-plane ACL (`L3`, ingress) |
 | Mirror specific flows to a monitoring port | Data-plane ACL (`MIRROR`, ingress) |
-| Allow SSH only from the management subnet | Control-plane ACL (`CTRLPLANE`, service SSH) |
-| Remark DSCP for traffic entering the network | Data-plane ACL (`L3`, ingress, with `DSCP_ACTION`) |
+| Remark DSCP for specific flows | Data-plane ACL (`UNDERLAY_SET_DSCP` type, with `DSCP_ACTION`) — platform-dependent (see note below) |
 | Drop traffic with specific TCP flags (SYN flood) | Data-plane ACL (`L3`, ingress) |
-| Rate-limit punted traffic (BGP, ARP, LLDP) | Not ACL — use [CoPP](21_punting.md#copp--control-plane-policing) instead |
 | Punt custom traffic to the CPU | Data-plane ACL with `COPY` action (see [ACL-Based Trapping](21_punting.md#acl-based-trapping)) |
+| Rate-limit punted traffic (BGP, ARP, LLDP) | Not ACL — use [CoPP](21_punting.md#copp--control-plane-policing) instead |
+| Allow SSH only from the management subnet | Control-plane ACL (`CTRLPLANE`, service SSH) |
+
+> **DSCP remarking via ACL.** `DSCP_ACTION` is **not** supported on standard `L3` or `MIRROR` table types — `AclRulePacket` does not handle it. ACL-based DSCP remarking requires the `UNDERLAY_SET_DSCP` (or `UNDERLAY_SET_DSCPV6`) table type, which `AclOrch` internally translates into a two-stage metadata pipeline: a `MARK_META` table at ingress that tags matching packets with metadata, and a companion `EGR_SET_DSCP` table at egress that matches on that metadata and sets the DSCP value. This mechanism is only available on platforms where `isAclMetaDataSupported()` returns true. For general DSCP remarking (not per-flow), QoS maps (TC-to-DSCP) are the standard approach.
 
 ---
 

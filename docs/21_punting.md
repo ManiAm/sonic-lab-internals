@@ -53,9 +53,9 @@ Not all punted traffic is handled the same way. The ASIC can do different things
 
 | Action           | SAI Constant                    | To CPU | Original Packet    | What the ASIC Does |
 |------------------|---------------------------------|--------|--------------------|---------------------|
-| **Trap**         | `SAI_PACKET_ACTION_TRAP`        | Yes    | Dropped            | `Copy + Drop` — sends a copy to the CPU and drops the original |
-| **Copy**         | `SAI_PACKET_ACTION_COPY`        | Yes    | Unchanged          | Sends a copy to the CPU without affecting the pipeline action |
-| **Log**          | `SAI_PACKET_ACTION_LOG`         | Yes    | Forwarded          | `Copy + Forward` — sends a copy to the CPU and forwards the original |
+| **Trap**         | `SAI_PACKET_ACTION_TRAP`        | `Yes`  | Dropped            | `Copy + Drop` — sends a copy to the CPU and drops the original |
+| **Copy**         | `SAI_PACKET_ACTION_COPY`        | `Yes`  | Unchanged          | Sends a copy to the CPU without affecting the pipeline action |
+| **Log**          | `SAI_PACKET_ACTION_LOG`         | `Yes`  | Forwarded          | `Copy + Forward` — sends a copy to the CPU and forwards the original |
 | **Drop**         | `SAI_PACKET_ACTION_DROP`        | No     | Dropped            | Silently discards the packet |
 | **Forward**      | `SAI_PACKET_ACTION_FORWARD`     | No     | Forwarded normally | Forwards the packet — effectively disables the trap |
 | **Copy Cancel**  | `SAI_PACKET_ACTION_COPY_CANCEL` | No     | Unchanged          | Cancels a pending copy from an earlier pipeline stage |
@@ -564,7 +564,7 @@ The 6 disabled trap IDs (`dest_nat_miss`, `dhcp`, `dhcpv6`, `eapol`, `sample_pac
 
 Everything discussed so far uses CoPP — a predefined set of trap types built into SAI. CoPP covers well-known protocols (BGP, ARP, LLDP, etc.) and pipeline exceptions (TTL error, MTU error), and the operator's control is limited to adjusting rates, queues, and actions for those fixed trap types. But what if you need to punt traffic that doesn't match any predefined SAI trap type?
 
-This is where **ACL-based trapping** comes in. SONiC allows operators to write ACL rules with a `PACKET_ACTION` of `COPY` (or `REDIRECT`), which tells the ASIC to punt matching packets to the CPU — using fully custom match criteria.
+This is where **ACL-based trapping** comes in. SONiC allows operators to write ACL rules, which tells the ASIC to punt matching packets to the CPU — using fully custom match criteria.
 
 ### How It Differs from CoPP
 

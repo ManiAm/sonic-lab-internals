@@ -79,7 +79,7 @@ CAM comes in two forms: **Binary CAM** (exact match only) and **Ternary CAM** (w
 
 Binary CAM supports only two bit states — **0** and **1** — so every lookup is an exact match. There is no way to express "don't care" bits, which means BCAM cannot do prefix matching or wildcard rules.
 
-<img src="../pics/memory_bcam.webp" width="300"/>
+<img src="../pics/memory_bcam.png" width="300"/>
 
 **Where BCAM is used in networking:**
 
@@ -97,7 +97,7 @@ TCAM extends Binary CAM by adding a third bit state: **X** (don't care / wildcar
 
 TCAM entries are evaluated in **priority order**, and the highest-priority match wins. When used for ACLs, the switch presents a packet header and the TCAM compares it against all stored rules in parallel, returning the highest-priority match in a single clock cycle. This is what makes line-rate evaluation possible.
 
-<img src="../pics/memory_tcam.webp" width="300"/>
+<img src="../pics/memory_tcam.png" width="300"/>
 
 **Where TCAM is used in networking:**
 
