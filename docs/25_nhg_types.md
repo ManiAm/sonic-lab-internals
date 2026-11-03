@@ -110,41 +110,145 @@ sai_next_hop_group_api->create_next_hop_group_member(&member_oid, switch_id, 4, 
 
 ## Fine-Grain ECMP (FG-ECMP)
 
-Fine-Grain ECMP gives software full control over a fixed-size bucket array with explicit per-bucket member assignment. It is implemented by `fgnhgorch` using `SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP`. When a route arriving through `ROUTE_TABLE` matches a prefix in `FG_NHG_PREFIX`, `routeorch` delegates it to `fgnhgorch` (step 3 in the [ASIC programming](24_load_balancing.md#asic-programming-routeorch) pipeline).
+Fine-Grain ECMP gives software full control over a fixed-size bucket array with explicit per-bucket member assignment. Instead of letting the ASIC manage the bucket-to-member mapping, `fgnhgorch` pre-computes the entire mapping and programs each bucket position explicitly. This software ownership enables **bank-scoped failover** — when a member fails, its buckets are redistributed only to members within the same bank, preserving per-spine traffic balance in Clos fabrics.
 
-### Configuration
+For the conceptual background on why FG-ECMP exists see [Fine-Grained ECMP](https://github.com/ManiAm/DC-Load-Balancing/blob/master/docs/02_ECMP_VAR.md#fine-grained-ecmp). This section focuses on the SONiC implementation: CONFIG_DB tables, match modes, `fgnhgorch` behavior, and SAI programming.
 
-FG-ECMP is configured per destination prefix through three CONFIG_DB tables:
+FG-ECMP uses `SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP`. When a route arriving through `ROUTE_TABLE` matches a prefix in `FG_NHG_PREFIX` (or matches by next-hop lookup in nexthop-based mode), `routeorch` delegates it to `fgnhgorch` (step 3 in the [ASIC programming](24_load_balancing.md#asic-programming-routeorch) pipeline).
 
-| Table           | Key         | Fields                      | Purpose |
-|-----------------|-------------|-----------------------------|---------|
-| `FG_NHG`        | Group name  | `bucket_size`, `match_mode` | Defines a named FG-ECMP group with its bucket count and matching strategy. |
-| `FG_NHG_PREFIX` | IP prefix   | `FG_NHG` (group name)       | Binds a destination prefix to an FG-ECMP group. |
-| `FG_NHG_MEMBER` | Next-hop IP | `FG_NHG`, `bank`            | Assigns a next hop to a group and a bank for scoped failover. |
+### CONFIG_DB Tables
 
-Example:
+FG-ECMP is configured through three CONFIG_DB tables:
+
+| Table           | Key         | Fields                                  | Purpose |
+|-----------------|-------------|-----------------------------------------|---------|
+| `FG_NHG`        | Group name  | `bucket_size`, `match_mode`, `max_next_hops` | Defines a named FG-ECMP group with its bucket count and matching strategy. |
+| `FG_NHG_PREFIX` | IP prefix   | `FG_NHG` (group name)                   | Binds a destination prefix to an FG-ECMP group. |
+| `FG_NHG_MEMBER` | Next-hop IP | `FG_NHG`, `bank`                        | Assigns a next hop to a group and a bank for scoped failover. |
+
+`FG_NHG` fields:
+
+| Field | Values | Description |
+|-------|--------|-------------|
+| `bucket_size` | Unsigned integer (required) | The number of hash buckets for this group. The ASIC may round up to a hardware-aligned value (e.g., 60 → 64); the actual allocation is returned via `SAI_NEXT_HOP_GROUP_ATTR_REAL_SIZE`. |
+| `match_mode` | `route-based` (default), `nexthop-based`, `prefix-based` | Controls how the group discovers its members and which prefixes it applies to (see [Match Modes](#match-modes) below). |
+| `max_next_hops` | Unsigned integer | Maximum number of next hops the group can hold. **Required** for `prefix-based` mode; ignored for other modes. |
+
+### Match Modes
+
+The `match_mode` field controls two things: how the group discovers its members (pre-declared vs. learned) and how it matches incoming routes (explicit prefix vs. automatic). `fgnhgorch` processes the mode in `doTaskFgNhg()` and uses three internal enums: `ROUTE_BASED`, `NEXTHOP_BASED`, and `PREFIX_BASED`.
+
+#### Route-Based (default)
+
+The operator pre-declares every next hop and its bank assignment via `FG_NHG_MEMBER`, and explicitly binds destination prefixes via `FG_NHG_PREFIX`. When a route arrives for a matching prefix, `fgnhgorch` looks up each of the route's next hops in the pre-declared member list. Only next hops that appear in the list are admitted, each placed in its pre-assigned bank.
+
+This is the most explicit mode — the operator has full control over which next hops are valid and which bank each one belongs to. A next hop advertised by a route but not in the pre-declared list is ignored.
 
 ```text
-FG_NHG|group1
+# Group definition — route-based is the default, match_mode can be omitted
+FG_NHG|CLUSTER-A
     bucket_size: 60
+    match_mode: route-based
 
+# Bind prefix to group
 FG_NHG_PREFIX|10.0.0.0/24
-    FG_NHG: group1
+    FG_NHG: CLUSTER-A
 
+# Pre-declare members with bank assignments (one per spine)
 FG_NHG_MEMBER|10.1.1.1
-    FG_NHG: group1
+    FG_NHG: CLUSTER-A
+    bank: 0
+
+FG_NHG_MEMBER|10.1.1.2
+    FG_NHG: CLUSTER-A
     bank: 0
 
 FG_NHG_MEMBER|10.1.2.1
-    FG_NHG: group1
-    bank: 0
+    FG_NHG: CLUSTER-A
+    bank: 1
 
-FG_NHG_MEMBER|10.1.3.1
-    FG_NHG: group1
+FG_NHG_MEMBER|10.1.2.2
+    FG_NHG: CLUSTER-A
     bank: 1
 ```
 
+When a route for `10.0.0.0/24` arrives with next hops `10.1.1.1` and `10.1.2.1`, both are found in the member list and admitted to their respective banks. If the route also advertises `10.1.3.1` (not in the list), that next hop is ignored.
+
+#### Nexthop-Based
+
+The operator pre-declares every next hop and its bank assignment (same as route-based), but does **not** bind prefixes. Instead, `fgnhgorch` watches for any route whose next hops match the pre-declared members. `FG_NHG_PREFIX` entries are silently ignored for nexthop-based groups.
+
+When `fgnhgorch` processes an `FG_NHG_MEMBER` entry in nexthop-based mode, it registers the member's IP in the `m_fgNhgNexthops` lookup map. When `routeorch` later calls `isRouteFineGrained()` for an incoming route, `fgnhgorch` checks whether the route's next hops are found in `m_fgNhgNexthops`. If all next hops match (and they all belong to the same FG-ECMP group), the route is handled by FG-ECMP automatically.
+
+```text
+# Group definition — nexthop-based mode
+FG_NHG|SPINE-PAIR
+    bucket_size: 60
+    match_mode: nexthop-based
+
+# No FG_NHG_PREFIX needed — prefix matching is automatic
+
+# Pre-declare members with bank assignments
+FG_NHG_MEMBER|10.1.1.1
+    FG_NHG: SPINE-PAIR
+    bank: 0
+
+FG_NHG_MEMBER|10.1.1.2
+    FG_NHG: SPINE-PAIR
+    bank: 0
+
+FG_NHG_MEMBER|10.1.2.1
+    FG_NHG: SPINE-PAIR
+    bank: 1
+
+FG_NHG_MEMBER|10.1.2.2
+    FG_NHG: SPINE-PAIR
+    bank: 1
+```
+
+Whether a route for `10.0.0.0/24`, `10.0.1.0/24`, or `192.168.0.0/16` arrives — if its next hops match these members, FG-ECMP handles it automatically. This mode is useful when the set of next hops is known and stable, but the destination prefixes they serve change dynamically.
+
+#### Prefix-Based
+
+The operator does **not** pre-declare individual next hops or bank assignments. The configuration specifies only the destination prefix, a bucket size, and the `max_next_hops` limit. When a route arrives for that prefix, `fgnhgorch` automatically admits whatever next hops the route advertises, up to the configured maximum.
+
+Because there are no pre-declared members, there are no bank assignments — all next hops are placed in a **single bank** (bank 0). This means prefix-based mode does **not** support bank-scoped failover. When a next hop fails, its buckets are redistributed across all survivors.
+
+`fgnhgorch` enforces these constraints:
+
+- `FG_NHG_MEMBER` entries are **rejected** — attempting to add a member for a prefix-based group logs an error and is ignored.
+- Only **one prefix** per group is allowed — additional `FG_NHG_PREFIX` entries for the same group are silently ignored.
+- `max_next_hops` must be set and non-zero — a prefix-based group with `max_next_hops = 0` logs an error.
+
+```text
+# Group definition — prefix-based mode
+FG_NHG|DYNAMIC-VIP
+    bucket_size: 30
+    match_mode: prefix-based
+    max_next_hops: 6
+
+# Bind prefix to group (only one prefix per group in this mode)
+FG_NHG_PREFIX|10.10.10.0/24
+    FG_NHG: DYNAMIC-VIP
+
+# No FG_NHG_MEMBER entries — members are learned from route updates
+```
+
+When a route for `10.10.10.0/24` arrives with 4 next hops, all 4 are admitted into bank 0. If the route later expands to 6 next hops, they are all accepted. A 7th would be skipped (exceeds `max_next_hops`).
+
+#### Summary
+
+| | Route-Based (default) | Nexthop-Based | Prefix-Based |
+|---|---|---|---|
+| **Next hops** | Pre-declared via `FG_NHG_MEMBER` | Pre-declared via `FG_NHG_MEMBER` | Learned from route updates |
+| **Bank assignment** | Per next hop (operator-specified) | Per next hop (operator-specified) | Single bank (no isolation) |
+| **Prefix binding** | Explicit via `FG_NHG_PREFIX` | Automatic (matched by next hops) | Explicit via `FG_NHG_PREFIX` (one only) |
+| **Bank-scoped failover** | Yes | Yes | No |
+| **`max_next_hops` required** | No | No | Yes |
+
 ### SAI Calls
+
+Regardless of match mode, `fgnhgorch` programs the same SAI objects. The match mode only affects how members are discovered and which prefixes are controlled — the ASIC-level programming is identical:
 
 ```c
 /* Group — adds CONFIGURED_SIZE for the fixed bucket array (unique to FG-ECMP) */
@@ -167,7 +271,11 @@ mbr_attrs[2].value.u32 = 0;                  /* ← explicit bucket position (un
 sai_next_hop_group_api->create_next_hop_group_member(&member_oid, switch_id, 3, mbr_attrs);
 ```
 
-When a member fails, `fgnhgorch` rewrites only the buckets belonging to that member and redistributes them to other members **within the same bank**. Members in other banks are untouched.
+### Bank-Scoped Failover
+
+When a member fails, `fgnhgorch` rewrites only the buckets belonging to that member and redistributes them to other members **within the same bank**. Members in other banks are untouched — their bucket ranges, their flows, and their traffic load remain stable.
+
+In prefix-based mode (single bank), this scoping has no effect — all members are in bank 0, so all survivors participate in the redistribution. This is the key trade-off: prefix-based mode trades bank isolation for configuration simplicity.
 
 
 ## Weighted ECMP (W-ECMP)
