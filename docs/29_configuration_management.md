@@ -89,13 +89,19 @@ Multiple tools and interfaces can write to CONFIG_DB:
 
 <img src="../pics/config-db-inputs.png" alt="segment" width="600">
 
-- **`config` CLI** — Python Click commands on the host; the most common way to make changes. See [Applying One Setting](#applying-one-setting).
+- **`config` CLI** — Python Click commands on the host; the most common way to make changes. See [Single Setting](#1-single-setting-config).
+
 - **`sonic-cli` (KLISH shell)** — An industry-style CLI served by the `mgmt-framework` container that translates traditional network-OS commands into CONFIG_DB writes.
+
 - **RESTCONF** — An HTTPS API served by the `mgmt-framework` container for external automation clients and orchestrators.
+
 - **gNMI** — A gRPC-based API served by the `gnmi` container; the standard interface used by many network automation platforms.
-- **Bulk file commands** — `config load`, `config apply-patch`, `config replace`, and `config reload` apply a JSON file to CONFIG_DB. See [Applying a File](#applying-a-file).
-- **`sonic-cfggen --write-to-db`** — The low-level translator used internally by boot scripts and `config load`. See [Low-Level Writes](#low-level-writes).
-- **`redis-cli` / `sonic-db-cli`** — Direct Redis access; the tool of last resort for debugging. See [Low-Level Writes](#low-level-writes).
+
+- **Bulk file commands** — `config load`, `config apply-patch`, `config replace`, and `config reload` apply a JSON file to CONFIG_DB. See [Applying a File](#2-applying-a-file).
+
+- **`sonic-cfggen --write-to-db`** — The low-level translator used internally by boot scripts and `config load`. See [Low-Level Writes](#3-low-level-writes-sonic-cfggen--redis).
+
+- **`redis-cli` / `sonic-db-cli`** — Direct Redis access; the tool of last resort for debugging. See [Low-Level Writes](#3-low-level-writes-sonic-cfggen--redis).
 
 > `sonic-cli`, RESTCONF, and gNMI all pass through the `translib` library, which validates every write against YANG models before committing it. See [The Two YANG Engines](#the-two-yang-engines).
 
@@ -117,7 +123,9 @@ This reads CONFIG_DB and writes `/etc/sonic/config_db.json`. It does not restart
 sudo config save -y /tmp/config_db.backup.json
 ```
 
-### Applying One Setting
+### Configuration Methods
+
+#### 1. Single Setting (`config`)
 
 The `config` command is the most common way to make a single change:
 
@@ -129,11 +137,11 @@ sudo config vlan member add 100 Ethernet4
 
 Every `config` command requires root, so the examples use `sudo`.
 
-### Applying a File
+#### 2. Applying a File
 
 Four commands apply a JSON file. They differ in which keys they change and whether they restart services.
 
-#### `config load`
+##### `config load`
 
 `config load` merges a JSON file into CONFIG_DB. Fields named in the file are written onto the matching key. Other fields already on that key stay, and keys the file does not mention are left in place.
 
@@ -144,7 +152,7 @@ sudo config load -y
 sudo config load -y /tmp/extra.json
 ```
 
-#### `config apply-patch`
+##### `config apply-patch`
 
 `config apply-patch` takes a JSON Patch (RFC 6902) — a list of add, replace, and remove operations that describe changes relative to the current CONFIG_DB. Only the operations in the patch are applied: a key is removed only when an explicit `remove` operation targets it.
 
@@ -164,7 +172,7 @@ Add `-d` to simulate the result and print it without writing:
 sudo config apply-patch -d /tmp/port-down.json
 ```
 
-#### `config replace`
+##### `config replace`
 
 `config replace` takes a complete `config_db.json`-shaped file. The file is the entire configuration: after the command finishes, CONFIG_DB matches the file exactly. Any key or field that the file omits is deleted. The updater builds a patch from the current database to the target file and applies the difference.
 
@@ -178,7 +186,7 @@ Add `-d` for a dry run:
 sudo config replace -d /tmp/new_config.json
 ```
 
-#### `config reload`
+##### `config reload`
 
 `config reload` is a full reset. It stops all SONiC services, deletes every CONFIG_DB key, loads the file, and starts the services again. Traffic is interrupted until the services recover. With no path it reads `/etc/sonic/config_db.json`. It asks for confirmation unless you pass `-y`.
 
@@ -191,7 +199,7 @@ sudo config reload -y /tmp/new_config.json
 
 > After `config reload` from a path other than the boot file, CONFIG_DB matches that path while `/etc/sonic/config_db.json` still holds the previous configuration. The next boot loads the boot file. Run `config save` when the new configuration should survive a reboot.
 
-### Low-Level Writes
+#### 3. Low-Level Writes (`sonic-cfggen` / Redis)
 
 `sonic-cfggen` is the program that `config load` and `config reload` call internally to translate JSON into CONFIG_DB. Boot scripts and container entrypoints also use it to render config files from the database.
 
