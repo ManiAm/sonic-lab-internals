@@ -103,7 +103,7 @@ Multiple tools and interfaces can write to CONFIG_DB:
 
 - **`redis-cli` / `sonic-db-cli`** — Direct Redis access; the tool of last resort for debugging. See [Low-Level Writes](#3-low-level-writes-sonic-cfggen--redis).
 
-> `sonic-cli`, RESTCONF, and gNMI all pass through the `translib` library, which validates every write against YANG models before committing it. See [The Two YANG Engines](#the-two-yang-engines).
+> `sonic-cli`, RESTCONF, and gNMI all pass through the `translib` library, which validates every write against YANG models before committing it. See [YANG Validation](#yang-validation).
 
 > All of these write CONFIG_DB in Redis. None of them touch `/etc/sonic/config_db.json`. The next section explains why this matters.
 
@@ -217,86 +217,15 @@ These are useful in the lab when you need to see the raw database effect. Neithe
 
 ## YANG Validation
 
-### The Problem: Redis Has No Schema
+Redis itself is a plain key-value store with no schema — it accepts whatever data it is given. To prevent invalid configuration from reaching CONFIG_DB, SONiC uses native `sonic-*.yang` YANG models as a centralized schema. Two validation engines enforce these models:
 
-As shown above, many different tools can write to CONFIG_DB — CLI commands, RESTCONF, gNMI, bulk file loads, and even raw Redis writes. Redis itself is a plain key-value store: it accepts whatever data it is given. If a tool writes `admin_status = "maybe"` or sets `speed = "banana"`, Redis stores it without complaint.
+- **CVL (Config Validation Library)** — a Go library called by Translib to validate each edit individually before the Redis write is committed. Used by `sonic-cli` (KLISH), RESTCONF, and gNMI.
 
-This is a problem. The manager daemon expecting `admin_status` to be `up` or `down` will not know what to do with `maybe`. It may ignore the key, log an error, or apply only the fields it understands. The switch ends up in an inconsistent state that is hard to debug.
+- **`sonic_yang`** — a Python library that validates the entire resulting configuration at once. Used by `config apply-patch`, `config replace`, and `config reload`.
 
-Each writing tool could implement its own validation — and some do (for example, `config vlan add` checks that the VLAN ID is between 2 and 4094). But per-tool checks are fragile: they can be inconsistent across tools, incomplete, or absent entirely. A better approach is a single, centralized schema that describes what a legal CONFIG_DB looks like, so any tool can validate against the same rules.
+Not every writer goes through YANG validation. Direct writes via `config load`, `sonic-cfggen --write-to-db`, or `redis-cli` bypass the YANG engines entirely and can store values the schema does not allow.
 
-### What Is YANG?
-
-YANG (RFC 7950) is a data-modeling language designed for network equipment. The IETF introduced it in 2010 (and revised it in 2016) to give the networking industry a standard way to describe configuration and state data — what fields a device supports, what values those fields accept, and how they relate to each other. Before YANG, every vendor defined its own configuration format with its own validation rules, making automation across different devices difficult.
-
-A YANG model is not code that runs on the device. It is a formal description — a schema — that tools read to understand the shape of the data. A model says things like "this field is a string that must match `up` or `down`" or "this list is keyed by interface name." Any tool that knows the schema can validate data before sending it to the device, regardless of whether that tool is a CLI, a REST client, or a gNMI controller.
-
-YANG is widely adopted across the industry. OpenConfig publishes vendor-neutral YANG models for common features (interfaces, BGP, LLDP, and others), and most network operating systems — including SONiC — ship their own YANG models for platform-specific configuration.
-
-> For a deeper introduction to YANG see [YANG (Yet Another Next Generation)](https://github.com/ManiAm/GNS-Sonic-Telemetry/blob/master/docs/05_README_yang.md).
-
-### How SONiC Uses YANG
-
-SONiC uses YANG as the schema for CONFIG_DB. The YANG models define which tables are allowed, which fields each table may contain, and which values those fields may hold. They ship with the image and match the string values stored in Redis.
-
-A shortened illustration — each `leaf` is a single field, and `type` / `pattern` constrain its values:
-
-```yang
-leaf admin_status {
-    type string {
-        pattern "up|down";
-    }
-}
-leaf speed { type string; }
-leaf mtu   { type string; }
-```
-
-### The Two YANG Engines
-
-YANG models are just descriptions — they do not execute on their own. Something has to load the models, take the data that is about to be written, and check it against the rules. SONiC has two libraries that do this, written in different languages for different parts of the system.
-
-- **CVL (Config Validation Library)** is a Go library in the `sonic-mgmt-common` repository. It is the YANG engine used by `translib`, the shared backend that serves RESTCONF, gNMI, and the `sonic-cli` (KLISH) shell. When any of these interfaces writes to CONFIG_DB, the `translib` DB layer calls `CVL.ValidateEditConfig()` inside the transaction, before the Redis write is committed. CVL validates **each edit individually**. It checks the operation (create, update, delete) against the YANG model for that table, resolving types, patterns, leafrefs, and `must`/`when` constraints in the context of the current database state.
-
-    <img src="../pics/cvl-write-flow.png" alt="CVL write-flow sequence" width="1000">
-
-    *The diagram above traces a write request from a northbound interface (REST or gNMI) through translib. After the App Module translates the request into Redis keys and values, the DB Access layer calls CVL to validate the payload before anything is committed. CVL runs syntax validation on the fields, checks the keys, fetches dependent data from Redis (the current database state needed to evaluate leafrefs and `must`/`when` constraints), and runs semantic validation on the merged data. Only after CVL returns success does the DB Access layer issue the Redis `commit`. If CVL rejects the edit, the transaction is rolled back and the caller receives an error.*
-
-- **`sonic_yang`** is a Python library used by the `config` CLI utilities. It is the engine behind `config apply-patch`, `config replace`, and `config reload <file>`. These commands do not validate one edit at a time. Instead, they simulate the **entire resulting configuration**, load it into `sonic_yang`, and call `validate_data_tree()` to check the whole tree at once. If validation fails, nothing is written.
-
-Both libraries load the same YANG model files that ship with the image. They enforce the same schema — the difference is in granularity (per-edit vs. whole-config) and which part of the system calls them.
-
-### Which Writers Validate
-
-Not every writer goes through a YANG engine. The table below shows which engine, if any, validates each writer:
-
-| Writer                                  | Validation                             |
-|-----------------------------------------|----------------------------------------|
-| `sonic-cli` (KLISH)                     | CVL — per-edit validation              |
-| RESTCONF                                | CVL — per-edit validation              |
-| gNMI                                    | CVL — per-edit validation              |
-| `config apply-patch`                    | `sonic_yang` — whole-config validation |
-| `config replace`                        | `sonic_yang` — whole-config validation |
-| `config reload <file>`                  | `sonic_yang` — whole-config validation |
-| `config interface`, `config vlan`, ...  | Per-command checks only (no YANG)      |
-| `config load`                           | None                                   |
-| `config reload` (no file argument)      | None                                   |
-| `sonic-cfggen --write-to-db`            | None                                   |
-| `redis-cli` / `sonic-db-cli`            | None                                   |
-
-A write that skips the YANG check can store a value the models do not allow. The manager daemon for that table may then ignore the key, log an error, or apply only the part it understands.
-
-Some `config` subcommands (hostname, portchannel, SNMP, mirror session) can optionally route their writes through the same updater that `config apply-patch` uses. This happens when `yang_config_validation` is enabled in CONFIG_DB:
-
-```
-DEVICE_METADATA|localhost → yang_config_validation = enable
-```
-
-```bash
-sudo config yang_config_validation enable
-sudo config yang_config_validation disable
-```
-
-When the field is absent or set to `disable`, those subcommands store the fields directly without a YANG check. `config apply-patch` and `config replace` always validate regardless of this setting.
+> For the full treatment see [YANG Validation in SONiC](https://github.com/ManiAm/GNS-Sonic-Telemetry/blob/master/docs/05c_README_yang_validation_sonic.md).
 
 ## What Happens After a CONFIG_DB Change
 
