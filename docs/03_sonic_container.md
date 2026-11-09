@@ -26,15 +26,9 @@ SONiC uses **Docker** as its container runtime. Docker builds container **images
 
 ## Why SONiC Uses Containers
 
-SONiC chose containers for the following reasons:
+Containers offer fault isolation, dependency isolation, fast startup, independent upgrades, and resource limits — but they also come with costs in disk footprint, memory overhead, operational complexity, and debugging. For a full discussion of these benefits and trade-offs, see [Container Benefits and Trade-offs](https://github.com/ManiAm/primer-virtualization/blob/master/docs/21_os_virtualization.md#container-benefits-and-trade-offs) in the Virtualization Primer.
 
-- **Fault isolation.** Each container runs independently, so a crash or misconfiguration in one subsystem does not bring down the others — the *blast radius* of any failure is limited to the container it occurs in. If the SNMP container crashes, the switch continues forwarding traffic, BGP sessions stay up, and only SNMP monitoring is temporarily lost.
-
-- **Complete dependency isolation.** Each container bundles its own libraries. The BGP routing suite can use one version of a library while the SNMP service uses another. No conflicts arise because each container's filesystem is independent. Without containers, upgrading a shared library for one daemon might break another — a common problem known as "dependency hell."
-
-- **Independent upgrades without reboot.** You can upgrade the BGP container to a new routing software version without touching anything else. Stop the old container, start the new one. The ASIC continues forwarding traffic with the existing programmed state.
-
-- **Resource limits.** Containers leverage cgroups to enforce CPU, memory, and I/O limits, so a runaway process in one container cannot starve the others.
+Beyond the general advantages, SONiC has specific reasons for choosing a container-based architecture:
 
 - **Uniform lifecycle management.** Every container follows the same pattern: a Dockerfile defines its contents, an entrypoint script handles initialization, and supervisord (a lightweight process manager) manages the processes inside. Adding a new feature means adding a new container that follows the same recipe.
 
@@ -42,20 +36,7 @@ SONiC chose containers for the following reasons:
 
 - **Kubernetes-ready future.** The SONiC community has explored using Kubernetes to orchestrate container updates across a fleet of switches — for example, rolling out a new telemetry container to thousands of switches without rebooting any of them. This work is experimental but the container-based architecture makes it feasible.
 
-## What Containers Cost
-
-Containers are not free. Here are the trade-offs SONiC accepts for this architecture:
-
-| Cost                | Impact |
-|---------------------|--------|
-| **Disk footprint**  | Each container duplicates base OS layers (~100–300 MB per container, mitigated by shared layers) |
-| **Memory overhead** | Each container has its own process namespace, supervisord, and rsyslog (~30–50 MB overhead per container) |
-| **Complexity**      | Docker daemon, container networking, volume mounts — more moving parts than running bare processes on the host |
-| **Startup time**    | Containers take longer to start than bare processes due to Docker create and start overhead |
-| **Debugging**       | Must `docker exec` into containers to inspect them; logs are spread across containers rather than in one place |
-
-For resource-constrained platforms (switches with as little as 4 GB of RAM), these costs matter. This is why SONiC allows disabling containers at build time or at runtime.
-
+For resource-constrained platforms (switches with as little as 4 GB of RAM), the per-container costs matter. This is why SONiC allows disabling containers at build time or at runtime.
 
 ## Container Categories
 
