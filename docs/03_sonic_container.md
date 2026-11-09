@@ -6,6 +6,8 @@ This document introduces the container-based architecture SONiC uses to organize
 
 A **container** is a lightweight, isolated environment that packages an application together with everything it needs to run — libraries, configuration files, and helper tools — so it behaves the same regardless of the host it runs on. Unlike a virtual machine, which runs an entire separate operating system on top of a hypervisor, a container shares the host's Linux kernel directly. This makes containers fast to start and adds minimal overhead compared to running the application directly on the host.
 
+> For a deeper treatment of virtualization concepts — hypervisors, QEMU, Docker internals, images, Dockerfiles, networking, and container runtimes — see the [Virtualization Primer](https://github.com/ManiAm/primer-virtualization). This document assumes basic familiarity with Docker; the primer covers the fundamentals from the ground up.
+
 ## SONiC Uses Docker
 
 SONiC uses **Docker** as its container runtime. Docker builds container **images** (read-only filesystem snapshots) and runs **containers** (live instances created from those images). Each SONiC subsystem — BGP, LLDP, SNMP, the switch state service, and so on — runs in its own container.
