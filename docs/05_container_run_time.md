@@ -93,9 +93,9 @@ SONiC uses two targets to separate infrastructure from application services. (Fo
 **`multi-user.target`** — SONiC places two critical services here so they start as part of ordinary system startup, before any SONiC application container:
 
 - **`database`** — starts the Redis container. Every other SONiC service needs Redis, so this must be up first.
-- **`config-setup`** — configuration initialization and migration. On a normal boot the database container itself loads `config_db.json` into Redis; `config-setup` runs afterward to apply migration hooks. On first boot to a new image (or when no configuration exists), it generates the initial configuration from minigraph, ZTP, or factory defaults and loads it into Redis. This is a one-shot host service, not a container.
+- **`config-setup`** — configuration initialization and migration. This is a one-shot host service, not a container. On a normal boot, the database container loads `config_db.json` into Redis during its own startup (see [`postStartAction`](#the-prestartaction-and-poststartaction-hooks) below); `config-setup` then runs version-migration scripts that adapt the saved configuration to the currently installed SONiC release. On first boot to a new image (or when no saved configuration exists), `config-setup` generates an initial configuration from minigraph, ZTP, or factory defaults and loads it into Redis.
 
-By the time systemd reaches `sonic.target`, Redis is running and CONFIG_DB is loaded.
+By the time systemd reaches `sonic.target`, Redis is running and `CONFIG_DB` is loaded.
 
 **`sonic.target`** — SONiC's own target. Every service in this group declares `BindsTo=sonic.target`, so their lifecycles are coupled to it:
 
@@ -329,7 +329,9 @@ Notice that **`syncd` has no outgoing arrows.** If the syncd container crashes, 
 
 #### Script-Level Failure Coupling
 
-The systemd graph above is not the complete picture. There is a second failure-propagation path that is entirely invisible to systemd — it lives inside `swss.sh`, the service script for the SWSS container. This path is what makes syncd's death take down swss (and everything else) even though no systemd directive connects them.
+The systemd graph above is not the complete picture. There is a second failure-propagation path that is entirely invisible to systemd — it lives inside `swss.sh`, the service script for the SWSS container.
+
+Recall that `swss.sh`'s `wait` function monitors not just the SWSS container itself but also several peer containers (syncd, bgp, teamd, and others). When any monitored peer exits, `wait` returns, causing `ExecStart` to finish and systemd to treat the SWSS unit as stopped. systemd then applies its restart policy, and because many other services depend on SWSS, they are pulled down as well. This is what makes syncd's death take down SWSS and everything downstream of it, even though no `.service` directive connects them.
 
 **This mechanism is unique to swss.** Every other container's `wait()` function runs a plain single-container wait — if syncd's service script (`syncd.sh`) detects that swss has died, it does not react; only swss watches across container boundaries. This is a deliberate design choice: swss is the orchestration hub, so it owns the group lifecycle.
 
@@ -338,7 +340,7 @@ The systemd graph above is not the complete picture. There is a second failure-p
 
 ### The FEATURE Table: Turning Containers On and Off
 
-Not every container is needed in every deployment, and not every operator wants automatic restarts. SONiC keeps these decisions in a **FEATURE table** in CONFIG_DB, so they are configuration rather than image content.
+Not every container is needed in every deployment, and not every operator wants automatic restarts. SONiC keeps these decisions in a **FEATURE table** in `CONFIG_DB`, so they are configuration rather than image content.
 
 Useful fields on each entry:
 
@@ -402,13 +404,13 @@ start() {
 }
 ```
 
-### create Versus start
+### `create` Versus `start`
 
 `docker create` builds the container instance from the image and fixes its volume mounts, network mode, and environment variables. Those settings cannot be changed afterwards, which is why creation happens only once. `docker start` then boots that already-configured instance, and is much faster because it skips creation.
 
 The script recreates the container in two situations. The obvious one is that no container with that name exists — first boot after installing a new SONiC image, since each installed image carries its own Docker state. The subtler one is that a container exists but was created with a *different HWSKU* mount path. HWSKU ("hardware SKU") identifies the specific port layout and hardware profile of the switch. Because the HWSKU directory is baked in at create time, changing HWSKU requires tearing the container down and building a new one — the script detects this by comparing the existing mount against the current configuration.
 
-### What the create Options Do
+### What the `create` Options Do
 
 | Option | Why it is there |
 |--------|-----------------|
@@ -420,14 +422,14 @@ The script recreates the container in two situations. The obvious one is that no
 
 Vendor and container specifics are layered on top of these. The syncd container gets ASIC device nodes and shared memory; pmon gets I²C, CPLD, and other hardware devices; the BGP container gets a writable `/etc/frr`.
 
-### The preStartAction and postStartAction Hooks
+### The `preStartAction` and `postStartAction` Hooks
 
 The template defines two per-container hooks. They are how one generic script serves thirty different containers:
 
-- **`preStartAction`** runs after the container is created but before it starts. The database container uses it to place a saved Redis dump into the container for a warm reboot; the SNMP container uses it to publish the chassis serial number into STATE_DB.
+- **`preStartAction`** runs after the container is created but before it starts. The database container uses it to place a saved Redis dump into the container for a warm reboot; the SNMP container uses it to publish the chassis serial number into `STATE_DB`.
 - **`postStartAction`** runs once the container is up. The database container waits here until Redis answers `PING`, loads `config_db.json`, runs the database schema migrator, and sets the `CONFIG_DB_INITIALIZED` flag — which is precisely the flag every other container's service script waits for.
 
-### stop and kill
+### `stop` and `kill`
 
 `stop` asks Docker to shut the container down gracefully, giving processes time to flush state. Some containers get a longer grace period: teamd is allowed 60 seconds so port-channels can be torn down cleanly. `kill` terminates immediately and is reserved for warm and fast reboot, where the goal is to freeze state rather than unwind it.
 

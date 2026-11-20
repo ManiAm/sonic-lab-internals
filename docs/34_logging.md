@@ -2,7 +2,7 @@
 
 > **Prerequisites**: This document assumes familiarity with syslog, rsyslog, routing rules, rate limiting, and logrotate. For that background, see [Syslog](https://github.com/ManiAm/linux-init-systems/blob/master/docs/09_syslog.md) in the Linux Init Systems companion project. [Inside a Running Container](06_inside_a_running_container.md) covers how supervisord captures daemon output. [The SWSS Container](11_swss_container.md) and [SAI and Syncd](14_sai_and_syncd.md) provide context for the SWSS logging macros and SAI recording files discussed here.
 
-Every SONiC daemon, across every container, produces log output. Understanding where those logs end up, how to change their verbosity, and how to collect them for analysis is foundational to operating and debugging a SONiC switch. This document covers the **SONiC-specific** logging stack — the SWSS C++ logging framework, the two-layer container→host rsyslog pipeline, SONiC routing rules, runtime log-level tuning, SAI recording files, SONiC log rotation, and diagnostic bundles.
+Every SONiC daemon, across every container, produces log output. Understanding where those logs end up, how to change their verbosity, and how to collect them for analysis is foundational to operating and debugging a SONiC switch. This document covers the **SONiC-specific** logging stack — the SWSS C++ logging framework, the two-layer container→host rsyslog pipeline, SONiC rsyslog routing rules, runtime log-level tuning, SAI recording files, log rotation, core dumps, kernel crash dumps (kdump), and diagnostic bundles.
 
 SONiC uses **rsyslog** in two layers: each container runs its own rsyslog instance that tags and forwards messages to the host, and the host runs a central rsyslog instance that applies SONiC routing rules and writes the final log files. The next section introduces the logging framework that SONiC's C++ daemons use to produce their messages.
 
@@ -113,7 +113,7 @@ RELP is a TCP-based transport that acknowledges every message, so log lines are 
 
 The `SYSLOG_TARGET_IP` environment variable is set when the container starts: `127.0.0.1` for single-ASIC platforms (where host networking reaches the host directly), or the Docker bridge gateway IP for multi-ASIC platforms.
 
-**The container rsyslog does not save any syslog messages locally.** There are no file-output rules in the container's rsyslog configuration — the `*.* action(type="omrelp" ...)` rule forwards everything and that is the only action. However, some daemons write non-syslog files (such as `.rec` recording files) directly to bind-mounted host directories, bypassing rsyslog entirely — see [SAI Recording Files](#sai-recording-files).
+**The container rsyslog does not save any syslog messages locally** — the `*.* action(type="omrelp" ...)` rule forwards everything, and it is the only output rule in the container's rsyslog configuration. However, some daemons write non-syslog files (such as `.rec` recording files) directly to bind-mounted host directories, bypassing rsyslog entirely — see [SAI Recording Files](#sai-recording-files).
 
 > **History:** Prior to [PR #18113](https://github.com/sonic-net/sonic-buildimage/pull/18113) (April 2026), containers forwarded logs to the host over **UDP** on port 514. UDP is fire-and-forget — if the host rsyslog restarted or fell behind, messages were silently dropped. The switch to RELP added TCP-level acknowledgement, linked-list queuing inside each container, and automatic retry on connection loss. If you are running a build from before this change, your host rsyslog will show `$ModLoad imudp` / `$UDPServerRun 514` instead of `imrelp` on port 2514.
 
@@ -145,7 +145,7 @@ Three properties of this architecture matter for daily work:
 
 2. **Log rotation is managed in one place.** Because the host owns the files, a single logrotate configuration (covered under [Log Rotation](#log-rotation)) handles every daemon across every container.
 
-3. **Logs survive container restarts.** When a container is destroyed and recreated, the host-side log files are unaffected. The container's own filesystem is ephemeral, but since all syslog messages are forwarded to the host (and non-syslog files like `.rec` recordings live on bind-mounted host directories), no log data is lost.
+3. **Logs survive container restarts.** When a container is destroyed and recreated, the host-side log files are unaffected. The container's own filesystem is ephemeral, but since all syslog messages are forwarded to the host (and non-syslog files like `.rec` recordings live on bind-mounted host directories — see [SAI Recording Files](#sai-recording-files)), no log data is lost.
 
 ## Host rsyslog Routing Rules
 
@@ -155,8 +155,8 @@ The rules in `00-sonic.conf` decide which file a message lands in by inspecting 
 
 | Match Rule | Log File | Contents |
 |------------|----------|----------|
-| `$programname` matches `bgp[0-9]*#(frr\|zebra\|staticd\|watchfrr)` | `/var/log/frr/zebra.log` | FRR control-plane daemons (not BGP) |
-| `$programname` matches `bgp[0-9]*#bgpd` | `/var/log/frr/bgpd.log` | BGP daemon |
+| `$programname` matches `bgp#frr`, `bgp#zebra`, `bgp#staticd`, or `bgp#watchfrr` (with an optional ASIC-instance digit) | `/var/log/frr/zebra.log` | FRR control-plane daemons (not BGP) |
+| `$programname` matches `bgp#bgpd` (with an optional ASIC-instance digit) | `/var/log/frr/bgpd.log` | BGP daemon |
 | `$programname` contains `teamd_` | `/var/log/teamd.log` | LAG/port-channel events |
 | `$msg` starts with `gnmi-native` | `/var/log/gnmi.log` | gNMI server |
 | `$msg` starts with `telemetry` or `dialout` | `/var/log/telemetry.log` | Streaming telemetry |
@@ -181,7 +181,7 @@ config syslog add <server-ip> --source <source-ip> --port 514 --vrf mgmt
 show syslog
 ```
 
-The host rsyslog uses its **omfwd** output module (supporting both UDP and TCP transport) to forward all messages matching the configured severity to the remote server. The VRF setting controls the transport path (e.g., `mgmt` VRF for out-of-band management), while the message content identifies the switch by its configured hostname.
+The host rsyslog uses its **omfwd** output module to forward all messages matching the configured severity to the remote server. omfwd supports both UDP and TCP transport. The VRF setting controls the network path used to reach the server (e.g., `mgmt` VRF sends traffic through the out-of-band management interface), while the message content identifies the originating switch by its configured hostname.
 
 ## Runtime Log-Level Tuning
 
@@ -238,7 +238,7 @@ redis-cli -n 4 HGETALL "LOGGER|orchagent"
 
 ### Persistence
 
-Changes made via `swssloglevel` or `redis-cli` take effect immediately and persist across container restarts (because CONFIG_DB remains in memory on the host). However, they do **not** survive a full reboot unless you run `config save` to write CONFIG_DB to disk.
+Changes made via `swssloglevel` or `redis-cli` take effect immediately and persist across container restarts (because CONFIG_DB remains in memory on the host). However, they do **not** survive a full reboot unless you run `config save`, which writes the current CONFIG_DB contents to the on-disk configuration file (`/etc/sonic/config_db.json`).
 
 ### SAI Log Levels
 
@@ -277,7 +277,7 @@ The valid SAI log levels (from most to least severe):
 
 ## SAI Recording Files
 
-In addition to syslog text logs, the **sairedis** library (the Redis-based client layer through which orchagent sends SAI calls to syncd) records every SAI API call to recording files. Unlike syslog messages (which flow through rsyslog and RELP), `.rec` files are written **directly to disk** by orchagent. They land in `/var/log/swss/`, which is bind-mounted from the host into the swss container — so the files are physically on the host filesystem even though orchagent writes them from inside the container. These `.rec` files are the authoritative record of what the switch told the ASIC to do — they capture the exact sequence of create, remove, set, and get operations with full parameter details.
+In addition to syslog text logs, the **sairedis** library (the Redis-based client layer through which orchagent sends SAI calls to syncd) records every SAI API call to recording files. Unlike syslog messages (which flow through the rsyslog/RELP pipeline), `.rec` files are written **directly to disk** by orchagent. They land in `/var/log/swss/`, which is a host directory bind-mounted into the swss container — so the files are physically on the host filesystem even though orchagent writes them from inside the container. These `.rec` files are the authoritative record of what the switch told the ASIC to do — they capture the exact sequence of create, remove, set, and get operations with full parameter details.
 
 ### File Locations
 
@@ -358,7 +358,7 @@ In SONiC, logrotate is invoked by a **systemd timer every 10 minutes** (not the 
 | ≤ 400 MB                  | 2 MB                          |
 | > 400 MB                  | 16 MB                         |
 
-All of the following share a single logrotate configuration (up to **5,000** rotated copies per file — a limit that disk space makes unreachable in practice; [On-Demand Cleanup](#on-demand-cleanup) deletes old archives first):
+The following files all share a single logrotate configuration. Each file is allowed up to **5,000** rotated copies — a theoretical limit that disk space makes unreachable in practice; [On-Demand Cleanup](#on-demand-cleanup) reclaims space long before this count is reached:
 
 - `/var/log/syslog` (orchagent, syncd, kernel, and most other daemons)
 - `/var/log/auth.log`, `/var/log/cron.log`
@@ -441,14 +441,14 @@ Unlike process core dumps, kdump is **not enabled by default** — it must be ex
 
 ```bash
 # Enable or disable kdump:
-sudo config kdump enable
-sudo config kdump disable
+config kdump enable
+config kdump disable
 
 # Set the amount of memory reserved for the capture kernel:
-sudo config kdump memory <size>       # e.g., "512M"
+config kdump memory <size>       # e.g., "512M"
 
 # Set the maximum number of dump files kept:
-sudo config kdump num_dumps <count>   # oldest are deleted beyond this limit
+config kdump num_dumps <count>   # oldest are deleted beyond this limit
 
 # View current configuration and operational status:
 show kdump config
@@ -477,11 +477,11 @@ kdump can optionally send crash dumps to a remote server over SSH, useful when l
 
 ```bash
 # Enable remote kdump:
-sudo config kdump remote enable
+config kdump remote enable
 
 # Configure the destination:
-sudo config kdump add ssh_string <user>@<host>
-sudo config kdump add ssh_path <path-to-private-key>
+config kdump add ssh_string <user>@<host>
+config kdump add ssh_path <path-to-private-key>
 ```
 
 ## Diagnostic Bundles (techsupport)
@@ -521,7 +521,7 @@ show techsupport --since "2 hours ago"
 
 ## Automatic Cleanup
 
-A cron job runs `core_cleanup.py` every **2 hours**. It performs two cleanup tasks:
+A cron job runs `core_cleanup.py` every **2 hours** to prevent old files from consuming disk space. It performs two cleanup tasks:
 
 1. **Core files** (`/var/core/`): Groups files by process name and enforces a cap of **4 core files per process**. When a process has more than 4, the oldest are deleted.
 
