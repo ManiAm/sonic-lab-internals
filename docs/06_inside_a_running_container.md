@@ -69,7 +69,7 @@ Helper programs that are genuinely independent do use `autorestart=unexpected`, 
 
 Notice `stdout_logfile=NONE` and `stdout_syslog=true` in the program block above. Daemons do not write their own log files — everything goes to syslog. Each container runs its own **rsyslogd** (started by supervisord as the first process), which tags every message with the container name and forwards it to the host over RELP. The host rsyslog then routes messages to `/var/log/syslog` (or to dedicated files for high-volume components like FRR and teamd). No logs are stored inside the container.
 
-For the full logging pipeline — the SWSS logging framework, container-to-host RELP forwarding, host routing rules, runtime log-level tuning, SAI recording files, log rotation, and core dumps — see [Logging in SONiC](34_logging.md).
+For the full logging pipeline — the SWSS logging framework, container-to-host RELP forwarding, host routing rules, runtime log-level tuning, SAI recording files, log rotation, and core dumps — see [Logging in SONiC](35_logging.md).
 
 ## 3. Health Monitoring and Failure Recovery
 

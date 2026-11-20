@@ -70,28 +70,29 @@ Read in order — each document builds on the concepts from the previous ones.
 | 23 | [The BGP Route-Download Benchmark](docs/23_benchmark.md) | Measuring route programming rate end-to-end, pipeline stages, tooling, and measured results |
 | 24 | [Load Balancing](docs/24_load_balancing.md) | ECMP in SONiC — SAI next-hop group types, routeorch, weighted ECMP (WCMP), fine-grained ECMP, class-based forwarding, and the full weight pipeline |
 | 25 | [SAI Next-Hop Group Types](docs/25_nhg_types.md) | Per-type deep dive — Dynamic ECMP, Fine-Grain ECMP, W-ECMP, Class-Based Forwarding, Protection Groups, and Bridge Port groups |
+| 26 | [The DHCP Relay Container](docs/26_dhcp_relay.md) | DHCP relay agent — packet flow, CONFIG_DB tables, DHCPv4/v6, VLAN-to-server mapping, and VRF-aware relay |
 
 ### Platform & Hardware
 
 | #  | Topic | Description |
 |----|-------|-------------|
-| 26 | [The PMON Container](docs/26_pmon_container.md) | Platform Monitor — Platform API, vendor plugins, xcvrd, psud, thermalctld, ledd, and hardware monitoring |
-| 27 | [Platform Configuration](docs/27_platform_configuration.md) | The device/ hierarchy, ONIE platform strings, HwSKU folders, port_config.ini, platform.json, and how platform files seed CONFIG_DB |
-| 28 | [Host Services](docs/28_host_services.md) | System health monitoring (healthd), monit, watchdog control, and other host-level systemd services |
+| 27 | [The PMON Container](docs/27_pmon_container.md) | Platform Monitor — Platform API, vendor plugins, xcvrd, psud, thermalctld, ledd, and hardware monitoring |
+| 28 | [Platform Configuration](docs/28_platform_configuration.md) | The device/ hierarchy, ONIE platform strings, HwSKU folders, port_config.ini, platform.json, and how platform files seed CONFIG_DB |
+| 29 | [Host Services](docs/29_host_services.md) | System health monitoring (healthd), monit, watchdog control, and other host-level systemd services |
 
 ### Configuration & Lifecycle
 
 | #  | Topic | Description |
 |----|-------|-------------|
-| 29 | [Configuration Management](docs/29_configuration_management.md) | config_db.json, CLI, YANG validation, save, load, patch, replace, and reload |
-| 30 | [Config Reload](docs/30_config_reload.md) | CONFIG_DB flush and reload, service stop/start order, delayed service start, config reload vs alternatives |
-| 31 | [Reboot Types](docs/31_reboot_types.md) | Cold, soft, fast, warm, and express reboot comparison |
-| 32 | [Warm Reboot Deep Dive](docs/32_warm_reboot.md) | Pre-shutdown state saving, kexec kernel transition, reconciliation, warmboot-finalizer, container-level warm restart |
+| 30 | [Configuration Management](docs/30_configuration_management.md) | config_db.json, CLI, YANG validation, save, load, patch, replace, and reload |
+| 31 | [Config Reload](docs/31_config_reload.md) | CONFIG_DB flush and reload, service stop/start order, delayed service start, config reload vs alternatives |
+| 32 | [Reboot Types](docs/32_reboot_types.md) | Cold, soft, fast, warm, and express reboot comparison |
+| 33 | [Warm Reboot Deep Dive](docs/33_warm_reboot.md) | Pre-shutdown state saving, kexec kernel transition, reconciliation, warmboot-finalizer, container-level warm restart |
 
 ### Observability & Troubleshooting
 
 | #  | Topic | Description |
 |----|-------|-------------|
-| 33 | [State Interactions](docs/33_state_interactions.md) | End-to-end data flows for routing, port events, VLAN, ARP |
-| 34 | [Logging](docs/34_logging.md) | Syslog, rsyslog routing, SWSS logging macros, SAI recording, log rotation, runtime tuning, techsupport, core dumps |
-| 35 | [Troubleshooting](docs/35_troubleshooting.md) | Debugging techniques for common SONiC problems |
+| 34 | [State Interactions](docs/34_state_interactions.md) | End-to-end data flows for routing, port events, VLAN, ARP |
+| 35 | [Logging](docs/35_logging.md) | Syslog, rsyslog routing, SWSS logging macros, SAI recording, log rotation, runtime tuning, techsupport, core dumps |
+| 36 | [Troubleshooting](docs/36_troubleshooting.md) | Debugging techniques for common SONiC problems |

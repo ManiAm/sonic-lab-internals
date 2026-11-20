@@ -15,7 +15,7 @@ Before the switch can do anything useful, it must first initialize its physical 
 
 `portsyncd` is the first process to start. Its job is simple but critical: read the port definitions from **CONFIG_DB** and republish them to **APPL_DB** so that `PortsOrch` can consume them.
 
-> The PORT table in CONFIG_DB is populated at boot time from the saved configuration file — see [How CONFIG_DB Is Populated at Boot](29_configuration_management.md#how-config_db-is-populated-at-boot).
+> The PORT table in CONFIG_DB is populated at boot time from the saved configuration file — see [How CONFIG_DB Is Populated at Boot](30_configuration_management.md#how-config_db-is-populated-at-boot).
 
 ```mermaid
 %%{init: {'sequence': {'mirrorActors': false}}}%%

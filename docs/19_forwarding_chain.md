@@ -237,7 +237,7 @@ This matches the EEPROM — confirming the full path from hardware to software.
 
 Unless explicitly overridden at any level, **every RIF on the switch shares the same source MAC**. This is standard for IP routing: each hop is identified by its IP address, not its MAC, so a single shared MAC is sufficient.
 
-> [`syseepromd`](26_pmon_container.md#syseepromd--system-eeprom-daemon) also reads the EEPROM at boot and publishes the base MAC and other TLV fields (serial number, platform name, vendor) to the `EEPROM_INFO` table in STATE_DB — this path is for monitoring and CLI display (`show platform syseeprom`), not for programming the ASIC. For how `DEVICE_METADATA` is populated during first boot, see [Platform Configuration](27_platform_configuration.md).
+> [`syseepromd`](27_pmon_container.md#syseepromd--system-eeprom-daemon) also reads the EEPROM at boot and publishes the base MAC and other TLV fields (serial number, platform name, vendor) to the `EEPROM_INFO` table in STATE_DB — this path is for monitoring and CLI display (`show platform syseeprom`), not for programming the ASIC. For how `DEVICE_METADATA` is populated during first boot, see [Platform Configuration](28_platform_configuration.md).
 
 
 ## From RIF to Route: The Full Object Chain
