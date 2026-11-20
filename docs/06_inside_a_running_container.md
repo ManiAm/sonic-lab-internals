@@ -65,32 +65,11 @@ This is intentional. Restarting orchagent alone would leave it out of sync with 
 
 Helper programs that are genuinely independent do use `autorestart=unexpected`, meaning "restart only if the exit code was not one of the expected ones." One-shot tasks such as `swssconfig` are expected to exit, and their exit is not treated as a failure.
 
-### Logging: rsyslog and Log Forwarding
+### Logging
 
-Notice `stdout_logfile=NONE` and `stdout_syslog=true` in the program block above. Daemons do not write their own log files. Everything goes to syslog, and each container runs its own **rsyslogd** to handle it.
+Notice `stdout_logfile=NONE` and `stdout_syslog=true` in the program block above. Daemons do not write their own log files — everything goes to syslog. Each container runs its own **rsyslogd** (started by supervisord as the first process), which tags every message with the container name and forwards it to the host over RELP. The host rsyslog then routes messages to `/var/log/syslog` (or to dedicated files for high-volume components like FRR and teamd). No logs are stored inside the container.
 
-The container's rsyslogd does not write files either. It tags every message with the container name and forwards the lot to the host over **RELP** (a reliable syslog transport) on port 2514:
-
-```
-orchagent (stdout/stderr)
-    → supervisord captures it
-        → container's rsyslogd tags it "swss#orchagent"
-            → RELP to host port 2514
-                → host rsyslogd
-                    → /var/log/syslog
-```
-
-Centralizing on the host has real advantages: one chronological view of the entire system, log rotation managed in one place, no risk of a container filling its own filesystem, and logs that survive the container being destroyed and recreated. From the host, everything is in `/var/log/syslog`:
-
-```bash
-# All messages from the swss container
-grep 'swss#' /var/log/syslog
-
-# Follow orchagent live
-tail -f /var/log/syslog | grep orchagent
-```
-
-A few components with high log volume get dedicated files on the host — `/var/log/frr/bgpd.log`, `/var/log/frr/zebra.log`, `/var/log/teamd.log`, `/var/log/telemetry.log` — configured by host-side rsyslog rules. The host can also forward everything onward to an external syslog server.
+For the full logging pipeline — the SWSS logging framework, container-to-host RELP forwarding, host routing rules, runtime log-level tuning, SAI recording files, log rotation, and core dumps — see [Logging in SONiC](34_logging.md).
 
 ## 3. Health Monitoring and Failure Recovery
 

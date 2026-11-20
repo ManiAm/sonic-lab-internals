@@ -1,21 +1,12 @@
 # Container Run Time: How the Host Manages Containers
 
-This document covers the host-side machinery that manages SONiC containers — how systemd starts them, how the two layers of shell scripts create and control them, and how the FEATURE table lets operators enable, disable, and configure automatic restarts. For how container images are built, see [Container Build Time](04_container_build_time.md). What happens *inside* a running container is covered in [Inside a Running Container](06_inside_a_running_container.md).
+> **Prerequisites**: This document assumes familiarity with systemd — unit files, service directives, requirement vs. ordering dependencies, and targets. For that background, see the [Linux Init Systems](https://github.com/ManiAm/linux-init-systems) companion project, especially [Unit Files](https://github.com/ManiAm/linux-init-systems/blob/master/docs/06_systemd_unit_files.md), [Service Configuration](https://github.com/ManiAm/linux-init-systems/blob/master/docs/07_systemd_services.md), [Unit Dependencies](https://github.com/ManiAm/linux-init-systems/blob/master/docs/08_systemd_dependencies.md), and [Targets](https://github.com/ManiAm/linux-init-systems/blob/master/docs/11_systemd_targets.md).
+
+This document covers the **SONiC-specific** host-side machinery that manages containers — how SONiC wraps each container in a systemd unit, the two layers of shell scripts that create and control them, the `sonic.target` service group, SONiC's dependency and failure-propagation graphs, and the FEATURE table that lets operators enable, disable, and configure automatic restarts. For how container images are built, see [Container Build Time](04_container_build_time.md). What happens *inside* a running container is covered in [Inside a Running Container](06_inside_a_running_container.md).
 
 ## 1. How systemd Manages Containers
 
-Once SONiC is installed on a switch, all container images are pre-loaded into Docker. But something has to decide *when* to start each one, in what order, and what to do when one dies. That job belongs to **systemd**, the standard Linux service manager.
-
-### Why systemd Rather Than Docker Alone
-
-Docker can start containers, but it does not provide the orchestration a network operating system needs:
-
-- **Dependency ordering** — the database container must be fully up before anything else starts; syncd must not start before swss.
-- **Automatic restart** — bring a container back if it exits unexpectedly.
-- **Rate limiting** — stop retrying after repeated rapid failures, instead of looping forever.
-- **A single interface** — containers and plain host processes (rsyslog, the CLI's helper daemons, platform services) are all managed with the same commands.
-
-Because every container is wrapped in a systemd unit, operators use ordinary Linux tooling:
+Once SONiC is installed on a switch, all container images are pre-loaded into Docker. systemd decides *when* to start each one, in what order, and what to do when one dies. SONiC wraps every container in a systemd unit so that containers and plain host processes (rsyslog, CLI helpers, platform services) share one interface:
 
 ```bash
 sudo systemctl start swss        # Start the SWSS container
@@ -23,15 +14,7 @@ sudo systemctl stop bgp          # Stop the BGP container
 systemctl status database        # Check the database container
 ```
 
-### Anatomy of a Service Unit
-
-A systemd unit file is a plain-text configuration file written in **INI format** — the same `[Section]` / `Key=Value` syntax used in many Linux configuration files. It is organized into three sections:
-
-| Section     | Purpose                                     |
-|-------------|---------------------------------------------|
-| `[Unit]`    | **What this service is and how it relates to others.** Contains the human-readable description, ordering directives (`After=`, `Before=`), and dependency directives (`Requires=`, `BindsTo=`, `Wants=`). This section is common to all unit types — services, targets, timers, etc. |
-| `[Service]` | **How to run the service.** Contains the actual commands to start, stop, and monitor the process (`ExecStart=`, `ExecStop=`), the user to run as, environment variables, and restart behavior. This section is specific to service units. |
-| `[Install]` | **When to activate this service.** Contains directives like `WantedBy=` that tell systemd which target should pull this unit in when it is enabled. This section is only read by `systemctl enable` / `systemctl disable` — it has no effect at runtime. |
+### A SONiC Container Unit
 
 Here is the SWSS unit, rendered for a single-ASIC switch:
 
@@ -62,21 +45,23 @@ RestartSec=30
 WantedBy=sonic.target
 ```
 
-| Directive                                          | What It Does |
-|----------------------------------------------------|------------------------------------------------------------|
-| `After=`                                           | Ordering — SWSS starts only after all listed units (`database.service`, `config-setup.service`, `sonic.target`) have finished starting. Without this, systemd could start them in parallel. |
-| `Requires=`                                        | Hard dependency — if any listed unit (`database.service`, `config-setup.service`) fails or is stopped, SWSS is stopped too. `config-setup` loads and migrates the configuration into CONFIG_DB; SWSS must not start against an empty database. |
-| `BindsTo=sonic.target`                             | A stronger form of `Requires=`. Ties SWSS to the SONiC service group — if the target is stopped or restarts, SWSS is stopped too. |
-| `StartLimitBurst=3` / `StartLimitIntervalSec=1200` | Allow at most 3 start attempts within 1200 seconds, after which the unit is marked failed and no further restarts are attempted. |
-| `RestartSec=30`                                    | Wait 30 seconds between restart attempts. |
-| `Environment=sonic_asic_platform=vs`               | The ASIC vendor family this image was built for (`broadcom`, `mellanox`, `vs` for the virtual switch, and so on). Scripts branch on it to run vendor-specific steps. |
-| `WantedBy=sonic.target`                            | Makes SWSS start automatically as part of the SONiC service group. |
+What matters for SONiC (for the general meaning of each directive, see the companion docs linked in the prerequisites):
 
-Two things about this unit are worth pausing on.
+| Directive | SONiC meaning |
+|-----------|---------------|
+| `After=database.service` / `config-setup.service` / `sonic.target` | SWSS must not start until Redis is up, CONFIG_DB is loaded/migrated, and the SONiC target is active. |
+| `Requires=database.service` / `config-setup.service` | Hard dependencies — if either fails or is stopped, SWSS is stopped too. SWSS must not run against an empty database. |
+| `BindsTo=sonic.target` | Ties SWSS to the SONiC service group — stopping or restarting the target stops SWSS. |
+| `StartLimitBurst=3` / `StartLimitIntervalSec=1200` | At most 3 start attempts in 1200 seconds, then the unit is marked failed. |
+| `RestartSec=30` | Wait 30 seconds between restart attempts. |
+| `Environment=sonic_asic_platform=vs` | ASIC vendor family (`broadcom`, `mellanox`, `vs`, …). Scripts branch on it for vendor-specific steps. |
+| `WantedBy=sonic.target` | Enables SWSS as part of the SONiC service group. |
 
-**There is no `Restart=` directive.** Most SONiC units deliberately omit it, because restart policy is not a build-time constant. It is supplied at run time from the FEATURE table, described later in this document.
+Two SONiC-specific design choices stand out.
 
-**`ExecStartPre` starts the container; `ExecStart` waits on it.** This is the pattern used by nearly every SONiC container unit, and it is the key to how systemd tracks container health:
+**There is no `Restart=` directive.** Most SONiC units deliberately omit it — restart policy is not a build-time constant. It is supplied at run time from the FEATURE table, described later in this document.
+
+**`ExecStartPre` starts the container; `ExecStart` waits on it.** Nearly every SONiC container unit uses this pattern so systemd can track Docker container health:
 
 ```
 ExecStartPre  → swss.sh start   → creates and starts the Docker container, then returns
@@ -84,9 +69,9 @@ ExecStart     → swss.sh wait    → blocks for as long as the container keeps 
 ExecStop      → swss.sh stop    → stops the container gracefully
 ```
 
-Because `ExecStart` blocks, systemd considers the unit active exactly as long as the container is alive. The moment the container exits — for any reason, including a crash inside it — the blocking `wait` returns, `ExecStart` finishes, and systemd applies its restart policy. Without this trick systemd would consider the unit "finished" the instant `docker start` returned and would never notice the container dying.
+Because `ExecStart` blocks, systemd considers the unit active exactly as long as the container is alive. When the container exits, `wait` returns, `ExecStart` finishes, and systemd applies its restart policy. Without this, systemd would treat the unit as finished the instant `docker start` returned and would never notice the container dying.
 
-For most containers, the `wait` step watches only that one container. But `swss.sh` is an exception. Its `wait` watches multiple containers at once, creating a cross-container failure coupling that is invisible to systemd. This is covered in detail in [Script-Level Failure Coupling](#script-level-failure-coupling).
+For most containers, `wait` watches only that one container. `swss.sh` is the exception — its `wait` watches multiple containers at once, creating a cross-container failure coupling invisible to systemd. See [Script-Level Failure Coupling](#script-level-failure-coupling).
 
 ### The Two Scripts Behind Every Container
 
@@ -103,20 +88,16 @@ Not every container needs the extra orchestration layer. Containers with cross-c
 
 ### Service Groups: `multi-user.target` and `sonic.target`
 
-systemd organizes units into **targets** — named groups that act as synchronization points. A target runs nothing itself; it is a handle for controlling a set of units at once. SONiC uses two targets to separate infrastructure from application services.
+SONiC uses two targets to separate infrastructure from application services. (For how targets work in general, see [Targets and Boot Flow](https://github.com/ManiAm/linux-init-systems/blob/master/docs/11_systemd_targets.md).)
 
-#### multi-user.target
-
-This is the standard Linux target for general system services. SONiC places two critical services here so they start early — as part of ordinary system startup, before any SONiC container:
+**`multi-user.target`** — SONiC places two critical services here so they start as part of ordinary system startup, before any SONiC application container:
 
 - **`database`** — starts the Redis container. Every other SONiC service needs Redis, so this must be up first.
-- **`config-setup`** — handles configuration initialization and migration. On a normal boot the database container itself loads `config_db.json` into Redis; `config-setup` runs afterward to apply any migration hooks. On first boot to a new image (or when no configuration exists), `config-setup` generates the initial configuration from minigraph, ZTP, or factory defaults and loads it into Redis. This is a one-shot host service, not a container.
+- **`config-setup`** — configuration initialization and migration. On a normal boot the database container itself loads `config_db.json` into Redis; `config-setup` runs afterward to apply migration hooks. On first boot to a new image (or when no configuration exists), it generates the initial configuration from minigraph, ZTP, or factory defaults and loads it into Redis. This is a one-shot host service, not a container.
 
 By the time systemd reaches `sonic.target`, Redis is running and CONFIG_DB is loaded.
 
-#### sonic.target
-
-This is SONiC's own target. Every service in this group declares `BindsTo=sonic.target` — their lifecycles are coupled to the target. If `sonic.target` is stopped, all of them are stopped. If it is restarted, all of them are restarted.
+**`sonic.target`** — SONiC's own target. Every service in this group declares `BindsTo=sonic.target`, so their lifecycles are coupled to it:
 
 ```bash
 sudo systemctl restart sonic.target   # Restart every SONiC container
@@ -124,17 +105,15 @@ sudo systemctl restart sonic.target   # Restart every SONiC container
 
 This is exactly what `config reload` does internally: stop `sonic.target`, reload configuration into Redis, then restart `sonic.target`.
 
-The `database` container is deliberately **not** in this group: it must survive a `sonic.target` restart so that Redis remains available while containers re-initialize.
+The `database` container is deliberately **not** in this group — it must survive a `sonic.target` restart so Redis remains available while containers re-initialize.
 
 ### Dependency Graph
 
-In systemd, `After=` and `Before=` are the two directives that control **startup ordering**. When a service declares `After=database.service`, systemd guarantees it will not start until the database service is up. `Before=` is the mirror image — it tells systemd "start me before that other service." Neither directive pulls a service in or controls what happens on failure — they purely define sequence.
+SONiC has around 30 container services, each declaring its ordering constraints (`After=` / `Before=`) in a `.service.j2` template. Extracting those relationships produces the graph below. (Ordering vs. requirement dependencies are covered in [Unit Dependencies](https://github.com/ManiAm/linux-init-systems/blob/master/docs/08_systemd_dependencies.md).)
 
-SONiC has around 30 container services, each declaring its ordering constraints in a `.service.j2` template inside the build system. If you extract every `After=` and `Before=` relationship from these templates and draw them as a graph, you get the picture below.
+The green nodes (`config-setup` and `topology`) are host-side services, not containers. They sit at the root of the tree — no SONiC container can start until the host completes its setup. If something goes wrong at this level (e.g., a corrupt `config_db.json` stalls `config-setup`), no container will start.
 
-The green nodes (`config-setup` and `topology`) are host-side services, not containers — as described in the previous section. They sit at the root of the tree, meaning no SONiC container can begin starting until the host completes its setup. If something goes wrong at this level (e.g., a corrupt `config_db.json` stalls `config-setup`), no container will start.
-
-An arrow from A to B means B declares `After=A` (or A declares `Before=B`) — B will not start until A is running. To keep the graph readable, most transitive edges are omitted (e.g., `database → snmp` is not drawn because it is implied through `database → … → swss → syncd → snmp`).
+An arrow from A to B means B declares `After=A` (or A declares `Before=B`) — B will not start until A is running. Most transitive edges are omitted (e.g., `database → snmp` is implied through `database → … → swss → syncd → snmp`).
 
 ```mermaid
 flowchart LR
@@ -234,43 +213,15 @@ flowchart LR
 
 ### Failure Propagation
 
-The dependency graph above shows **startup ordering** — what starts before what. But there is a separate question: **when a service crashes, what else gets pulled down with it?**
+The graph above shows **startup ordering**. A separate question is: **when a service crashes, what else gets pulled down with it?** That is controlled by requirement dependencies (`Requires=`, `Requisite=`, `BindsTo=`, …), not by `After=` / `Before=`. For the full directive reference, see [Unit Dependencies](https://github.com/ManiAm/linux-init-systems/blob/master/docs/08_systemd_dependencies.md).
 
-Ordering (`After=` / `Before=`) does not answer this. systemd has a separate family of directives specifically for **dependency management** — they control whether units are pulled in, and what happens when one of them fails or stops.
+In SONiC specifically:
 
-#### Dependency Management Directives
+- Service templates use `Requires=` and `Requisite=` for hard dependencies between containers.
+- Every application container declares `BindsTo=sonic.target` to tie its lifecycle to the target group.
+- `Wants=` is used sparingly (only `database` uses `Wants=database-chassis.service` for an optional chassis dependency).
 
-| **Directive** | **Description** |
-|---------------|-----------------|
-| `Requires=`   | **Must have.** If the required unit fails to start, this unit won't start either. systemd will try to start the required unit automatically. |
-| `Requisite=`  | **Must already be running.** Like `Requires=`, but systemd will NOT try to start it — if it's not already active right now, this unit fails immediately. |
-| `BindsTo=`    | **Live and die together.** Like `Requires=`, but even stricter — if the bound unit stops (for any reason), this unit is stopped too. Their lifecycles are tightly coupled. |
-| `Wants=`      | **Nice to have.** systemd will try to start the wanted unit, but if it fails, this unit starts anyway. Use this for optional dependencies. |
-| `Upholds=`    | **Keep it alive.** If the listed unit stops or is not running, systemd will continuously try to restart it. Think of it as a persistent `Wants=` that keeps retrying. |
-
-Each of these has a **reverse** form — instead of "I depend on X", the reverse says "X depends on me." They are typically placed in the `[Install]` section and take effect when a unit is enabled via `systemctl enable`.
-
-| **Directive**  | **Description** |
-|----------------|-----------------|
-| `RequiredBy=`  | Indicates units that require this unit to be active to start themselves. |
-| `RequisiteOf=` | Indicates units that will fail if this unit cannot start. |
-| `WantedBy=`    | Indicates units that want this unit to be active but will not fail if it isn't. |
-| `BoundBy=`     | Indicates units that will stop or restart when this unit stops or restarts. |
-| `UpheldBy=`    | Indicates units that help maintain or keep this unit running. |
-
-In SONiC, the service templates use `Requires=` and `Requisite=` for hard dependencies between containers, and every container declares `BindsTo=sonic.target` to tie its lifecycle to the target group. `Wants=` is used sparingly (only `database` uses `Wants=database-chassis.service` for an optional chassis dependency).
-
-#### Which Directives Cause Failure Propagation?
-
-Not all dependency management directives are **fate-coupling** directives. Only three propagate failure — meaning if the dependency dies, the dependent is pulled down with it:
-
-| Directive    | If dependency stops ... |
-|--------------|-------------------------|
-| `Requires=`  | Dependent is stopped.   |
-| `Requisite=` | Dependent is stopped (and won't auto-start the dependency). |
-| `BindsTo=`   | Dependent is stopped; if dependency restarts, dependent restarts too. |
-
-The graph below visualizes these fate-coupling relationships. A dashed arrow from B to A means "A declares `Requires=B` or `Requisite=B`" — if B dies, A is pulled down. Only relationships between SONiC services are shown.
+The fate-coupling graph below shows which of those relationships actually pull dependents down when a dependency dies. A dashed arrow from B to A means "A declares `Requires=B` or `Requisite=B`" — if B dies, A is pulled down. Only relationships between SONiC services are shown.
 
 ```mermaid
 flowchart LR
@@ -413,9 +364,9 @@ sudo config feature autorestart swss enabled # Restart SWSS automatically on fai
 
 A host daemon called **`featured`** subscribes to this table and translates changes into systemd actions. It is the piece that makes a Redis value have an effect on a running system:
 
-- **`state` changes.** Setting a feature to `enabled` runs `systemctl unmask`, `enable`, then `start`. Setting it to `disabled` runs `systemctl stop`, `disable`, then `mask`. Masking is stronger than disabling: a masked unit cannot be started even by a dependency or an explicit command, which is what makes the "off" state stick.
+- **`state` changes.** `enabled` → `systemctl unmask` + `enable` + `start`. `disabled` → `systemctl stop` + `disable` + `mask`. Masking is what makes "off" stick — a masked unit cannot be started even by a dependency. (See [Masking and Unmasking](https://github.com/ManiAm/linux-init-systems/blob/master/docs/05_systemd_management.md#masking-and-unmasking-units).)
 
-- **`auto_restart` changes.** `featured` writes a systemd drop-in file at `/etc/systemd/system/<name>.service.d/auto_restart.conf` containing either `Restart=always` or `Restart=no`, then runs `systemctl daemon-reload`. This is the missing `Restart=` directive from the unit file shown earlier. A drop-in is a small fragment systemd merges on top of the original unit, so the shipped unit file is never modified.
+- **`auto_restart` changes.** `featured` writes a drop-in at `/etc/systemd/system/<name>.service.d/auto_restart.conf` containing either `Restart=always` or `Restart=no`, then runs `systemctl daemon-reload`. That is the missing `Restart=` from the unit file shown earlier — the shipped unit is never modified.
 
 
 ## 2. The Container Control Script

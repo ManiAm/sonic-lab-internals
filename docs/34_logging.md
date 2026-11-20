@@ -1,84 +1,10 @@
 # Logging in SONiC
 
-> **Prerequisites**: [Inside a Running Container](06_inside_a_running_container.md) covers how supervisord captures daemon output and how the container's rsyslog forwards it to the host. [The SWSS Container](11_swss_container.md) and [SAI and Syncd](14_sai_and_syncd.md) provide context for the SWSS logging macros and SAI recording files discussed here.
+> **Prerequisites**: This document assumes familiarity with syslog, rsyslog, routing rules, rate limiting, and logrotate. For that background, see [Syslog](https://github.com/ManiAm/linux-init-systems/blob/master/docs/09_syslog.md) in the Linux Init Systems companion project. [Inside a Running Container](06_inside_a_running_container.md) covers how supervisord captures daemon output. [The SWSS Container](11_swss_container.md) and [SAI and Syncd](14_sai_and_syncd.md) provide context for the SWSS logging macros and SAI recording files discussed here.
 
-Every SONiC daemon, across every container, produces log output. Understanding where those logs end up, how to change their verbosity, and how to collect them for analysis is foundational to operating and debugging a SONiC switch. This document covers the full logging stack — from the Linux syslog primitives at the bottom, through SONiC's routing rules and C++ logging framework, up to the diagnostic bundles you hand to engineering when something goes wrong.
+Every SONiC daemon, across every container, produces log output. Understanding where those logs end up, how to change their verbosity, and how to collect them for analysis is foundational to operating and debugging a SONiC switch. This document covers the **SONiC-specific** logging stack — the SWSS C++ logging framework, the two-layer container→host rsyslog pipeline, SONiC routing rules, runtime log-level tuning, SAI recording files, SONiC log rotation, and diagnostic bundles.
 
-## Syslog Basics
-
-Programs on a Linux system send log messages by calling the C `syslog()` function (or by writing to the `/dev/log` Unix socket). Each message carries two pieces of metadata:
-
-- **Facility** — which subsystem produced it (e.g., `kern`, `daemon`, `local0`).
-- **Severity** — how important it is.
-
-The eight severity levels, from most to least severe:
-
-| Level | Name      | Meaning                   |
-|-------|-----------|---------------------------|
-| 0     | `emerg`   | System is unusable        |
-| 1     | `alert`   | Immediate action required |
-| 2     | `crit`    | Critical condition        |
-| 3     | `err`     | Error condition           |
-| 4     | `warning` | Warning condition         |
-| 5     | `notice`  | Normal but significant    |
-| 6     | `info`    | Informational             |
-| 7     | `debug`   | Debug-level detail        |
-
-Here is a minimal C program that sends one message at each of three severity levels:
-
-```c
-#include <syslog.h>
-
-int main(void)
-{
-    openlog("myapp", LOG_PID, LOG_DAEMON);    // identity="myapp", facility=daemon
-
-    syslog(LOG_ERR,    "disk full on /var");  // severity 3
-    syslog(LOG_NOTICE, "service started");    // severity 5
-    syslog(LOG_DEBUG,  "counter = %d", 42);   // severity 7
-
-    closelog();
-    return 0;
-}
-```
-
-`openlog()` sets the **program name** (`myapp`) and the **facility** (`LOG_DAEMON`). Each `syslog()` call then only needs a severity and a message — the syslog daemon handles the rest.
-
-After compiling and running the program, the messages appear in `/var/log/syslog`:
-
-```
-Oct  7 21:37:36 sonic myapp[4070575]: disk full on /var
-Oct  7 21:37:36 sonic myapp[4070575]: service started
-Oct  7 21:37:36 sonic myapp[4070575]: counter = 42
-```
-
-Each line contains the timestamp, hostname, program name with PID, and the message text:
-
-```
-Oct  7 21:37:36 sonic myapp[4070575]: disk full on /var
-│               │     │     │         └─ message
-│               │     │     └─ PID
-│               │     └─ program name (from openlog)
-│               └─ hostname
-└─ timestamp
-```
-
-All `syslog()` does is write the message to the `/dev/log` Unix socket. A separate **syslog daemon** is listening on that socket — it receives every message and decides where to store it (in this case, `/var/log/syslog`). Without that daemon running, the messages would go nowhere.
-
-Whether the DEBUG-level line (`counter = 42`) appears depends on the syslog daemon's configured severity threshold. A threshold of NOTICE, for example, means only messages at NOTICE severity and above are kept — the DEBUG line would be suppressed. SONiC defaults to NOTICE, as covered in [Runtime Log-Level Tuning](#runtime-log-level-tuning).
-
-This is the core idea behind syslog: programs just emit messages with a facility and a severity, and a separate daemon decides where those messages go. The next section covers that daemon.
-
-## rsyslog
-
-**rsyslog** is the syslog daemon that SONiC uses. It is the most common implementation on Debian-based systems and is significantly more capable than the original `syslogd` — it supports structured logging, reliable transport protocols, content-based filtering, and high-throughput message processing.
-
-rsyslog listens for incoming syslog messages and **routes** them to destinations — log files, the console, or remote servers — based on configurable rules. Its configuration lives in two places:
-
-- `/etc/rsyslog.conf` — the main configuration file.
-- `/etc/rsyslog.d/*.conf` — drop-in files for modular rules.
-
-In SONiC, rsyslog runs in **two layers**: each container runs its own rsyslog instance that forwards messages to the host, and the host runs a central rsyslog instance that applies routing rules and writes the final log files. Before tracing this full path, the next section introduces the logging framework that SONiC's C++ daemons use to produce their messages.
+SONiC uses **rsyslog** in two layers: each container runs its own rsyslog instance that tags and forwards messages to the host, and the host runs a central rsyslog instance that applies SONiC routing rules and writes the final log files. The next section introduces the logging framework that SONiC's C++ daemons use to produce their messages.
 
 ## The SWSS Logging Framework
 
@@ -193,12 +119,12 @@ The `SYSLOG_TARGET_IP` environment variable is set when the container starts: `1
 
 #### Container Rate Limiting
 
-Each container's rsyslog has a rate limit (configured in the `imuxsock` module shown above) to prevent a misbehaving daemon from flooding the host:
+Each container's rsyslog rate-limits via `imuxsock` (see [rsyslog Rate Limiting](https://github.com/ManiAm/linux-init-systems/blob/master/docs/09_syslog.md#rsyslog-rate-limiting) for the general mechanism). SONiC's defaults are generous compared to a typical Linux host:
 
-- **Interval:** 300 seconds (default)
-- **Burst:** 20,000 messages per interval (default)
+- **Interval:** 300 seconds
+- **Burst:** 20,000 messages per interval
 
-If a container exceeds this limit, rsyslog drops messages and logs a single warning. You can tune these thresholds per-container through the `SYSLOG_CONFIG_FEATURE` table in CONFIG_DB, which the `rsyslog-container.conf.j2` template reads when generating the container's rsyslog configuration.
+You can tune these per-container through the `SYSLOG_CONFIG_FEATURE` table in CONFIG_DB, which the `rsyslog-container.conf.j2` template reads when generating the container's rsyslog configuration.
 
 ### Stage 3 — Host rsyslog Receives and Routes to Files
 
@@ -223,11 +149,9 @@ Three properties of this architecture matter for daily work:
 
 ## Host rsyslog Routing Rules
 
-Once messages arrive on the host, rsyslog uses rules in `/etc/rsyslog.d/` to split them into dedicated log files.
+Once messages arrive on the host, rsyslog uses drop-in rules in `/etc/rsyslog.d/` to split them into dedicated log files. `00-sonic.conf` (SONiC's routing rules) runs first; `99-default.conf` (the catch-all that sends unmatched messages to `/var/log/syslog`) runs last. For how drop-in ordering and the `stop` directive work in general, see [rsyslog Routing Rules](https://github.com/ManiAm/linux-init-systems/blob/master/docs/09_syslog.md#rsyslog-routing-rules).
 
-rsyslog loads drop-in files in **lexicographic order**, so the numeric prefix controls priority: `00-sonic.conf` (SONiC's routing rules) runs first, and `99-default.conf` (the catch-all that sends unmatched messages to `/var/log/syslog`) runs last. This ordering matters because rsyslog evaluates rules top-to-bottom — a message caught by an earlier file's `stop` directive (which tells rsyslog to stop processing further rules for that message) never reaches later files.
-
-The rules in `00-sonic.conf` decide which file a message lands in by inspecting two fields. The first is the **program name** tag — the `swss#orchagent` or `bgp#bgpd` label that the container rsyslog attached in Stage 2. The second is the **message body** itself — the actual text of the log line. Each rule checks one of these fields against a pattern and, if it matches, writes the message to a specific file:
+The rules in `00-sonic.conf` decide which file a message lands in by inspecting two fields: the **program name** tag (`swss#orchagent`, `bgp#bgpd`, …) attached by the container rsyslog in Stage 2, and the **message body** itself:
 
 | Match Rule | Log File | Contents |
 |------------|----------|----------|
@@ -240,16 +164,7 @@ The rules in `00-sonic.conf` decide which file a message lands in by inspecting 
 | `$programname` contains `stp` (except messages containing `STP_SYSLOG`) | `/var/log/stpd.log` | Spanning tree |
 | Everything else | `/var/log/syslog` | Default catch-all (orchagent, syncd, kernel, etc.) |
 
-Most SONiC daemons — including orchagent, syncd, and all the `*mgrd` manager daemons — do not have dedicated files. Their messages appear in `/var/log/syslog` alongside kernel messages and everything else. This is intentional: a single chronological file makes it easy to correlate events across components.
-
-The host also writes a few standard Linux log files that are not SONiC-specific:
-
-| File                       | Source |
-|----------------------------|--------|
-| `/var/log/kern.log`        | Kernel messages |
-| `/var/log/auth.log`        | Authentication events (SSH, sudo) |
-| `/var/log/audit/audit.log` | Linux audit subsystem |
-| `/var/log/cron.log`        | Cron job output |
+Most SONiC daemons — including orchagent, syncd, and all the `*mgrd` manager daemons — do not have dedicated files. Their messages appear in `/var/log/syslog` alongside kernel messages and everything else. This is intentional: a single chronological file makes it easy to correlate events across components. The host also keeps the usual Linux files (`kern.log`, `auth.log`, `cron.log`, …) — see [Standard Log Files](https://github.com/ManiAm/linux-init-systems/blob/master/docs/09_syslog.md#standard-log-files).
 
 ### Remote Syslog
 
@@ -433,23 +348,9 @@ awk -F'|' '{print $2}' /var/log/swss/sairedis.rec | sort | uniq -c | sort -rn
 
 ## Log Rotation
 
-SONiC switches have limited disk space — typically 4–16 GB for the `/var/log` partition. Without management, log files grow continuously and can fill the disk within hours under heavy load. **Log rotation** is the process of archiving the current log file and starting a fresh one, so that no single file grows without bound.
+SONiC switches have limited disk space — typically 4–16 GB for the `/var/log` partition — so log files must be rotated aggressively. The general logrotate model (rename, compress, keep N copies, signal the writer) is covered in [Log Rotation](https://github.com/ManiAm/linux-init-systems/blob/master/docs/09_syslog.md#log-rotation). This section covers only what SONiC does differently.
 
-On Linux, the standard tool for this is **logrotate**. In SONiC, logrotate is invoked by a **systemd timer** every **10 minutes**. Each time the timer fires, logrotate checks every managed log file and rotates any that exceed the configured size threshold.
-
-### Which Files Are Rotated
-
-All of the following log files share a single logrotate configuration:
-
-- `/var/log/syslog` (orchagent, syncd, kernel, and most other daemons)
-- `/var/log/auth.log`, `/var/log/cron.log`
-- `/var/log/teamd.log`, `/var/log/telemetry.log`, `/var/log/stpd.log`, `/var/log/gnmi.log`, `/var/log/otel.log`
-- `/var/log/frr/bgpd.log`, `/var/log/frr/zebra.log`
-- `/var/log/swss/sairedis*.rec`, `/var/log/swss/swss*.rec`, `/var/log/swss/responsepublisher.rec`
-
-### Size Thresholds
-
-Each file is rotated when it reaches a **maximum size**. The threshold scales with the `/var/log` partition size — switches with more disk space allow larger files before rotation:
+In SONiC, logrotate is invoked by a **systemd timer every 10 minutes** (not the usual daily cron/timer). Each run rotates any managed file that exceeds a **size** threshold — not an age threshold. The threshold scales with the `/var/log` partition size:
 
 | `/var/log` Partition Size | Max File Size Before Rotation |
 |---------------------------|-------------------------------|
@@ -457,40 +358,21 @@ Each file is rotated when it reaches a **maximum size**. The threshold scales wi
 | ≤ 400 MB                  | 2 MB                          |
 | > 400 MB                  | 16 MB                         |
 
-The logrotate configuration permits up to **5,000 rotated copies** per file. In practice this limit is never reached — disk space is exhausted long before any single file accumulates that many archives. The [On-Demand Cleanup](#on-demand-cleanup) mechanism deletes the oldest archives well before that point.
+All of the following share a single logrotate configuration (up to **5,000** rotated copies per file — a limit that disk space makes unreachable in practice; [On-Demand Cleanup](#on-demand-cleanup) deletes old archives first):
 
-### What Rotation Looks Like on Disk
-
-When a file exceeds its size threshold, logrotate renames it and creates a fresh one. Over time, this produces a numbered sequence of archives:
-
-```
-── After first rotation ──────────────────────────────────
-syslog              ← new, empty file (daemons write here now)
-syslog.1            ← previous file (not yet compressed)
-
-── After second rotation ─────────────────────────────────
-syslog              ← new, empty file
-syslog.1            ← previous file
-syslog.2.gz         ← oldest file (compressed)
-
-── After several rotations ───────────────────────────────
-syslog              ← current (active) file
-syslog.1            ← one rotation ago
-syslog.2.gz         ← two rotations ago (compressed)
-syslog.3.gz         ← three rotations ago (compressed)
-...
-syslog.12.gz        ← oldest kept copy
-```
-
-The number in the filename indicates age — lower numbers are newer. Only the most recent archive (`.1`) is kept uncompressed; this is called **delayed compression**, which allows any process still writing to the old file descriptor to finish before the file is compressed. All older copies carry a `.gz` suffix.
+- `/var/log/syslog` (orchagent, syncd, kernel, and most other daemons)
+- `/var/log/auth.log`, `/var/log/cron.log`
+- `/var/log/teamd.log`, `/var/log/telemetry.log`, `/var/log/stpd.log`, `/var/log/gnmi.log`, `/var/log/otel.log`
+- `/var/log/frr/bgpd.log`, `/var/log/frr/zebra.log`
+- `/var/log/swss/sairedis*.rec`, `/var/log/swss/swss*.rec`, `/var/log/swss/responsepublisher.rec`
 
 ### `.rec` File Rotation and SIGHUP
 
-`.rec` files require special handling because orchagent holds a file descriptor open for continuous writing. When logrotate rotates a `.rec` file, it sends a **SIGHUP** signal to the orchagent process that owns the file. SIGHUP is a standard Unix signal that tells a process to reload or re-initialize. orchagent handles it by closing the old file descriptor and opening a new one, so recording continues seamlessly into the fresh file.
+`.rec` files require special handling because orchagent holds a file descriptor open for continuous writing. When logrotate rotates a `.rec` file, it sends **SIGHUP** to the orchagent process that owns the file. orchagent closes the old descriptor and opens a new one, so recording continues seamlessly into the fresh file.
 
 ### On-Demand Cleanup
 
-When the log partition is nearly full, logrotate triggers an **on-demand cleanup** via its `firstaction` and `postrotate` hooks — scripts that logrotate runs before and after rotating a file, respectively. The cleanup deletes the oldest archived (compressed) log files until enough space is recovered, starting with the oldest files first regardless of which log category they belong to.
+When the log partition is nearly full, logrotate triggers an **on-demand cleanup** via its `firstaction` and `postrotate` hooks. The cleanup deletes the oldest archived (compressed) log files until enough space is recovered, starting with the oldest files first regardless of which log category they belong to.
 
 > **Limitation — poll-based rotation gap:** Because logrotate only runs every 10 minutes, files can grow well past their rotation threshold between invocations. During traffic bursts — for example, BGP convergence programming thousands of routes — orchagent can write `.rec` files at over 1 MB/s. In a single 10-minute interval, a file could grow by hundreds of megabytes before logrotate checks it. On-Demand Cleanup reclaims the space on the next invocation, but the temporary overshoot has already consumed disk. This is an inherent limitation of poll-based rotation.
 
