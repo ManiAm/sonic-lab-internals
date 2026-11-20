@@ -41,8 +41,6 @@ The `dhcp_relay` container starts late in the boot sequence (see the [dependency
 | `teamd` | `After=` (ordering) | The relay sends traffic toward servers over upstream interfaces, which are often port channels (LAGs). Those interfaces must exist before the relay binds to them. |
 | `config-setup` | `Requires=` (fate-coupled) | The VLAN and DHCP server configuration must be loaded into `CONFIG_DB` before the relay reads it. If `config-setup` fails, `dhcp_relay` is stopped. |
 
-During a [config reload](31_config_reload.md), `dhcp_relay` is also a **delayed** service: `hostcfgd` starts it only after `PortInitDone` is set, so the interfaces it binds to are already present.
-
 When the container starts, its startup script renders the supervisord configuration from `CONFIG_DB`. This step decides which relay processes to run and with which arguments, such as one DHCPv4 relay per VLAN that has servers configured. supervisord then launches those processes.
 
 ## CONFIG_DB Tables

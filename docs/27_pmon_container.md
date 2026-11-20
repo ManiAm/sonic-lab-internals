@@ -12,7 +12,7 @@ A switch's physical peripherals are accessed through low-level hardware interfac
 
 1. **Fault isolation.** A bug in a fan-monitoring daemon cannot crash orchagent or disrupt packet forwarding. PMON daemons can crash, restart, and recover without affecting the data plane.
 
-2. **Hardware access isolation.** PMON is the only container that needs direct access to `/sys`, I²C devices, and GPIO pins. The Docker run options for PMON include Linux capabilities (`--cap-add=SYS_RAWIO`, `--cap-add=SYS_ADMIN`) and volume mounts (`-v /sys/:/sys/:rw`) — privileges that no other SONiC container requires.
+2. **Hardware access isolation.** PMON is the only container that reads and writes peripheral hardware such as fan controllers, sensors, transceiver EEPROMs, and GPIO pins. To reach them, PMON runs as a privileged container (`--privileged`) with volume mounts such as `-v /sys/:/sys/:rw`. Privileged mode itself is not unique to PMON — several other SONiC containers (e.g., swss and syncd) also run privileged — but PMON is where all the peripheral-access code lives.
 
 3. **Vendor boundary.** The vendor-specific code that translates a generic request like "read fan speed" into the actual low-level hardware operation lives inside PMON, behind a standard API. The rest of SONiC never touches it.
 
@@ -192,7 +192,7 @@ Hardware data moves in one direction — from the physical device, through the P
 │    type: QSFP28               │
 │    vendor: Finisar            │
 │                               │
-│  THERMAL_INFO|...             │
+│  TEMPERATURE_INFO|...         │
 │  EEPROM_INFO|...              │
 └──────────┬────────────────────┘
            │
@@ -215,7 +215,7 @@ This architecture means that:
 
 ## The Daemons Inside PMON
 
-The PMON container runs multiple independent daemons, each responsible for a specific category of hardware. Their source code lives in the [`sonic-platform-daemons`](https://github.com/sonic-net/sonic-platform-daemons) repository. All daemons are managed by **supervisord** (the same process manager used inside every SONiC container) and follow the [data flow pattern](#data-flow-hardware--statedb--CliSNMP) described above.
+The PMON container runs multiple independent daemons, each responsible for a specific category of hardware. Their source code lives in the [`sonic-platform-daemons`](https://github.com/sonic-net/sonic-platform-daemons) repository. All daemons are managed by **supervisord** (the same process manager used inside every SONiC container) and follow the [data flow pattern](#data-flow-hardware--state_db--clisnmp) described above.
 
 ### Daemon Reference
 
@@ -223,7 +223,7 @@ The PMON container runs multiple independent daemons, each responsible for a spe
 |-----------------|-------------------------------|---------------|-------------------|
 | **xcvrd**       | Transceivers (SFP/QSFP/OSFP) — presence, EEPROM info, DOM (Digital Optical Monitoring) | 1 s (events), 60 s (DOM) | `TRANSCEIVER_INFO`, `TRANSCEIVER_DOM_SENSOR`, `TRANSCEIVER_STATUS` |
 | **psud**        | Power supply units — presence, power good, voltage, current, power, temperature | 3 s | `PSU_INFO`, `CHASSIS_INFO`, `FAN_INFO` (PSU fans) |
-| **thermalctld** | Fans and temperature sensors — speed, direction, presence, thermal thresholds, thermal policy | 60 s | `FAN_INFO`, `FAN_DRAWER_INFO`, `THERMAL_INFO` |
+| **thermalctld** | Fans and temperature sensors — speed, direction, presence, thermal thresholds, thermal policy | 60 s | `FAN_INFO`, `FAN_DRAWER_INFO`, `TEMPERATURE_INFO` |
 | **sensormond**  | Voltage and current sensors (board-level) | Configurable | Sensor-specific tables |
 | **ledd**        | Front-panel port LEDs — link up/down state | Event-driven (not polled) | None (controls LEDs directly) |
 | **syseepromd**  | System EEPROM — serial number, MAC address, platform name | 60 s (integrity check) | `EEPROM_INFO` |
@@ -480,7 +480,7 @@ The supervisord template (`docker-pmon.supervisord.conf.j2`) uses Jinja2 (a Pyth
 
 The PMON container starts after the `database` and `config-setup` services (as declared in `pmon.service` — see the [startup dependency graph](05_container_run_time.md#dependency-graph)). Its startup sequence is:
 
-1. **Docker creates the container** with hardware-access capabilities (`SYS_RAWIO`, `SYS_ADMIN`) and volume mounts for `/sys`, `/etc/sonic`, and platform-specific directories.
+1. **Docker creates the container** in privileged mode (`--privileged`) with volume mounts for `/sys`, `/etc/sonic`, and platform-specific directories.
 
 2. **`docker_init.sh` runs** (the container's entrypoint):
    - Runs the platform wait script (`platform_wait`) if one exists — some platforms need hardware to settle before daemons can start.
@@ -488,7 +488,7 @@ The PMON container starts after the `database` and `config-setup` services (as d
    - Detects platform capabilities (sensor config files, fan control config, modular chassis).
    - Renders the supervisord configuration from the Jinja2 template, incorporating the [daemon control](#daemon-control-enabling-and-disabling-daemons) flags.
 
-3. **supervisord starts** and launches the configured daemons. Each daemon has a `priority` value in the supervisord configuration — lower numbers start first. Typically, `syseepromd` and `pcied` start early (they perform one-time hardware discovery), while `xcvrd`, `psud`, and `thermalctld` follow once the platform is fully initialized. Each daemon starts as an independent process, loads the `sonic_platform` chassis object, and enters its own polling loop.
+3. **supervisord starts** and launches the configured daemons. As in other SONiC containers, start order is not controlled by supervisord `priority` values: the daemons are marked `autostart=false`, and the `supervisord-dependent-startup` plugin starts each one once its declared prerequisites (`dependent_startup_wait_for`, typically rsyslogd running) are satisfied — see [Startup Ordering](06_inside_a_running_container.md#startup-ordering-why-autostart-is-false). Each daemon starts as an independent process, loads the `sonic_platform` chassis object, and enters its own polling loop.
 
 ### Runtime
 

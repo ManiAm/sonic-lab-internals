@@ -40,10 +40,11 @@ show system-health summary
 # Real-time syslog
 tail -f /var/log/syslog
 
-# Container-specific logs
+# Daemon logs from a specific container (all forwarded to host syslog)
+grep "swss#" /var/log/syslog | tail -50
+
+# Container entrypoint/supervisord output only — daemon logs are not here
 docker logs swss
-docker logs syncd
-docker logs bgp
 
 # Search for errors
 grep -i "error\|fail\|abort" /var/log/syslog | tail -50
@@ -62,7 +63,9 @@ sonic-db-cli APPL_DB hgetall 'ROUTE_TABLE:10.0.0.0/24'
 
 # Check for pending (unprocessed) entries
 sonic-db-cli APPL_DB keys '_*'
-sonic-db-cli ASIC_DB keys '_*'
+
+# ASIC_DB has no staging keys; its pending work is a list that syncd drains
+sonic-db-cli ASIC_DB LLEN ASIC_STATE_KEY_VALUE_OP_QUEUE
 ```
 
 ## Problem: Container Keeps Restarting
@@ -118,8 +121,8 @@ sudo systemctl restart sonic.target
 
 ```bash
 # 1. Check physical/admin state
-show interface status Ethernet0
-show interface counters Ethernet0
+show interfaces status Ethernet0
+show interfaces counters Ethernet0
 
 # 2. Check CONFIG_DB intent
 sonic-db-cli CONFIG_DB hgetall 'PORT|Ethernet0'
@@ -142,19 +145,19 @@ ip link show Ethernet0
 grep -i "Ethernet0\|port" /var/log/syslog | grep -i "error\|fail"
 
 # 8. Check transceiver (if SFP/QSFP)
-show interface transceiver presence
-show interface transceiver info Ethernet0
+show interfaces transceiver presence
+show interfaces transceiver info Ethernet0
 ```
 
 ### Common Causes
 
 | Layer | Issue | Fix |
 |-------|-------|-----|
-| Physical | No transceiver / bad cable | Check `show interface transceiver presence` |
+| Physical | No transceiver / bad cable | Check `show interfaces transceiver presence` |
 | Config | admin_status = down | `config interface startup Ethernet0` |
 | State | Port not initialized | Check STATE_DB, may need container restart |
 | ASIC | SAI error during port create | Check syncd logs |
-| Kernel | Interface not created | Check portsyncd logs |
+| Kernel | Interface not created | Check orchagent and syncd logs — PortsOrch creates host interfaces via SAI; portsyncd only observes them |
 
 ## Problem: Routes Not Being Programmed
 
@@ -202,14 +205,16 @@ orchagent: :- doTask: task_timeout: PORT_TABLE
 
 Orchagent has entries in its task queue (`m_toSync`) that it cannot process — likely because a dependency is not met. After a timeout period, it logs this warning.
 
+Entries already popped into `m_toSync` are no longer in Redis, so the APPL_DB `_*` keys only show entries orchagent has not consumed yet — not the ones it is retrying. See [Task Queue (m_toSync)](12_orchagent.md#3-task-queue-m_tosync) for how this queue works.
+
 ### Diagnosis
 
 ```bash
-# Check for pending entries
-sonic-db-cli APPL_DB keys '_*'
-
 # Check orchagent's view of pending items
 grep "doTask\|task_timeout\|retry" /var/log/syslog | tail -20
+
+# See which entries orchagent received (and in what order)
+grep "PORT_TABLE" /var/log/swss/swss.rec | tail -20
 ```
 
 ### Common Causes
@@ -255,4 +260,4 @@ If CONFIG_DB has the value but APPL_DB doesn't, the manager daemon either:
 
 ---
 
-**Previous**: [← Logging](35_logging.md)
+**Previous**: [← Logging](35_logging.md) · **Next**: [Appendix A — Memory Types →](A1_memory_types.md)

@@ -33,7 +33,7 @@ This is what makes SONiC portable — orchagent calls the same SAI API regardles
 
 ### SAI API Versioning
 
-Each SONiC release is tied to a SAI API **generation** (major.minor), fixed at release cut. The API surface — object types, attributes, function signatures — does not change within a generation. Patch revisions within that generation continue to be adopted on the release branch for bug fixes and metadata corrections (e.g., 202511 was cut at 1.17.0 but has since moved to 1.17.5). SONiC follows a **biannual release cadence** — one release in May and one in November each year — with releases named by year and month (`YYYYMM`).
+Each SONiC release is tied to a SAI API **generation** (major.minor), fixed at release cut. The API surface — object types, attributes, function signatures — does not change within a generation. Patch revisions within that generation continue to be adopted on the release branch for bug fixes and metadata corrections (e.g., 202511 was cut at 1.17.0 but has since moved to 1.17.5). SONiC releases come out **roughly twice a year**, named by year and month (`YYYYMM`).
 
 | SONiC Release | SAI Generation (at cut) |
 |---------------|-------------------------|
@@ -147,8 +147,10 @@ After the meta layer validates the call and sairedis writes it to ASIC_DB, the `
 In sync mode (`orchagent -s`), orchagent's SAI call blocks until syncd processes it and returns a status code. If the vendor SAI call fails:
 
 - Syncd sends the `SAI_STATUS_*` error code back to orchagent via a `GETRESPONSE` message.
-- Orchagent decides what to do based on the specific error and object type (retry, ignore, or alert).
-- No crash is needed — the error is handled gracefully at the application layer.
+- Orchagent sees the failure at the call site, so the error is attributed to the exact object and operation that caused it.
+- Most create, set, and remove failures are passed to `handleSaiFailure()`, which typically aborts orchagent.
+
+The benefit of sync mode is immediate, attributable error detection — not crash avoidance.
 
 #### Asynchronous Mode
 

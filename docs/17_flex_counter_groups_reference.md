@@ -209,7 +209,7 @@ Default interval: **10 s**.
 
 ## TUNNEL_STAT
 
-Per-tunnel encap/decap traffic counters (VxLAN tunnels). Polled by `VxlanOrch` from the `tunnel_stat_ids` array.
+Per-tunnel encap/decap traffic counters (VxLAN tunnels). Polled by `VxlanTunnelOrch` from the `tunnel_stat_ids` array.
 
 Default interval: **10 s**.
 

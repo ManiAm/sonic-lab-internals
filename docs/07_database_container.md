@@ -17,6 +17,8 @@ The following sections explain each of these responsibilities in detail — star
 
 The database container can run one or more Redis server instances in parallel. Each instance is an independent process with its own memory, its own persistence settings, and its own Unix domain socket file.
 
+By default, SONiC runs a single instance named `redis` on port 6379, and that one instance serves every logical database — each database is selected by its number. Multi-instance layouts are optional and must be enabled explicitly (see [How the Layout Is Selected at Startup](#how-the-layout-is-selected-at-startup)).
+
 When multiple instances are in use, you can see them by listing the Redis processes inside the database container:
 
 ```bash
@@ -33,7 +35,7 @@ A single instance works, but it has fundamental limitations: all databases share
 
 - **Performance isolation.** COUNTERS_DB receives high-frequency writes every few seconds as hardware counters are polled. Running it on its own instance prevents those writes from adding latency to CONFIG_DB reads or APPL_DB updates, which are on the critical path for programming the ASIC.
 
-- **Independent configuration.** Each instance can have different memory limits, different persistence policies, and different eviction behavior. For example, COUNTERS_DB needs no persistence, while APPL_DB and ASIC_DB must be saved for [fast, warm, and express reboot](32_reboot_types.md#the-redis-snapshot).
+- **Independent configuration.** Each instance can have different memory limits, different persistence policies, and different eviction behavior. For example, COUNTERS_DB needs no persistence, while APPL_DB must be saved for [fast, warm, and express reboot](32_reboot_types.md#the-redis-snapshot) — and ASIC_DB as well for warm reboot, where the new syncd reuses the saved SAI object IDs.
 
 - **Lua script isolation.** Redis executes Lua scripts atomically — no other command can run on the same instance while a script is in progress. Several IPC patterns in SONiC rely on Lua scripts for atomicity (see [IPC Mechanisms](10_ipc_mechanisms.md)). Keeping unrelated databases on separate instances means a long-running Lua script on one instance does not block operations on another.
 
@@ -56,7 +58,7 @@ The table below is the complete list of every logical database defined in SONiC,
 | 7     | SNMP_OVERLAY_DB    | Specialized | SNMP-specific overlay data |
 | 8     | RESTAPI_DB         | Specialized | REST API / management framework state |
 | 14    | APPL_STATE_DB      | Specialized | Application-specific runtime state |
-| 9     | GB_ASIC_DB         | Gearbox     | Gearbox ASIC state (multi-ASIC systems) |
+| 9     | GB_ASIC_DB         | Gearbox     | Gearbox PHY state (systems with external gearbox PHYs) |
 | 10    | GB_COUNTERS_DB     | Gearbox     | Gearbox counters |
 | 11    | GB_FLEX_COUNTER_DB | Gearbox     | Gearbox flex counter control |
 | 12    | CHASSIS_APP_DB     | Chassis     | Chassis-level application state (modular systems) |
@@ -156,12 +158,7 @@ The file is generated from a Jinja2 template and placed at `/var/run/redis/sonic
         "redis": {
             "hostname": "127.0.0.1",
             "port": 6379,
-            "unix_socket_path": "/var/run/redis/sonic-db/redis.sock"
-        },
-        "redis2": {
-            "hostname": "127.0.0.1",
-            "port": 6380,
-            "unix_socket_path": "/var/run/redis/sonic-db/redis2.sock"
+            "unix_socket_path": "/var/run/redis/redis.sock"
         }
     },
     "DATABASES": {
@@ -178,11 +175,13 @@ The file is generated from a Jinja2 template and placed at `/var/run/redis/sonic
         "COUNTERS_DB": {
             "id": 2,
             "separator": ":",
-            "instance": "redis2"
+            "instance": "redis"
         }
     }
 }
 ```
+
+This example shows the default single-instance layout: one `redis` instance, with every database's `instance` field pointing at it. In a multi-instance layout, `INSTANCES` lists additional entries (for example, `redis1` on port 6378 with socket `/var/run/redis/redis1.sock`), and each database's `instance` field names the instance that hosts it.
 
 Every SONiC component that needs to connect to Redis — whether through the `swsscommon` library, `sonic-db-cli`, or `redis-cli` with a wrapper — reads this file to find the correct instance and separator. This means the database layout can change between builds or platforms without modifying any application code.
 
@@ -248,7 +247,7 @@ With the structure of the database container established — its Redis instances
 
 The database container occupies a special position in SONiC's startup sequence. As described in [Container Run Time](05_container_run_time.md), most containers belong to the `sonic.target` service group. The database container does not — its systemd unit is tied to `multi-user.target` and depends only on `docker.service`, so it starts as part of ordinary Linux system startup, well before any SONiC container.
 
-Every other container's systemd unit declares `Requires=database.service` and `After=database.service`. This means no container can start until the database container is running.
+Core units such as `swss`, `syncd`, `bgp`, `pmon`, and `lldp` declare `Requires=database.service` and `After=database.service` directly. Others, such as `teamd`, `snmp`, and `dhcp_relay`, depend on it transitively — through `config-setup` or `swss`, which themselves require the database. Either way, no container can start until the database container is running.
 
 ### The Two-Stage Readiness Gate
 
@@ -382,14 +381,19 @@ On a **clean first boot** (no prior configuration), the migrator is skipped enti
 - **Which instance** the database lives on — specified by port (`-p`) or Unix socket (`-s`).
 - **Which logical database** within that instance — specified by its numeric ID (`-n`).
 
-If you omit `-p` and `-s`, `redis-cli` connects to `127.0.0.1:6379` by default — which is the primary Redis instance (`redis`). So for databases on that instance (CONFIG_DB, STATE_DB, LOGLEVEL_DB), you only need `-n`:
+If you omit `-p` and `-s`, `redis-cli` connects to `127.0.0.1:6379` by default — which is the primary Redis instance (`redis`). In the default single-instance layout every database lives on that instance, so you only need `-n`:
 
 ```bash
-redis-cli -n 4        # CONFIG_DB — on the default instance (port 6379)
-redis-cli -n 6        # STATE_DB  — also on the default instance
+redis-cli -n 4        # CONFIG_DB
+redis-cli -n 6        # STATE_DB
+redis-cli -n 1 KEYS 'ASIC_STATE:SAI_OBJECT_TYPE_ARS*'     # ASIC_DB
+redis-cli -n 2 HGETALL "COUNTERS:oid:0x1000000000012"     # COUNTERS_DB
+
+# Unix socket instead of port (equivalent to the default 127.0.0.1:6379)
+redis-cli -s /var/run/redis/redis.sock -n 4
 ```
 
-For databases on other instances, you must specify the correct port (or socket):
+In a multi-instance layout, databases moved to other instances require the correct port (or socket). Using the example layout shown in [Redis Instances](#redis-instances):
 
 ```bash
 # ASIC_DB — instance redis2 (port 6377), logical id 1
@@ -419,7 +423,7 @@ sonic-db-cli APPL_DB HGETALL "PORT_TABLE:Ethernet0"
 sonic-db-cli COUNTERS_DB HGETALL "COUNTERS:oid:0x1000000000012"
 ```
 
-`sonic-db-cli` resolves the correct instance, socket, and database ID automatically. You never need to remember that CONFIG_DB is database 4 on port 6379, or that COUNTERS_DB is database 2 on port 6376. If the database layout changes — for example, when switching from single-instance to multi-instance mode — the same `sonic-db-cli` commands continue to work without modification.
+`sonic-db-cli` resolves the correct instance, socket, and database ID automatically. You never need to remember that CONFIG_DB is database 4 on port 6379, or that in a multi-instance layout COUNTERS_DB is database 2 on port 6376. If the database layout changes — for example, when switching from single-instance to multi-instance mode — the same `sonic-db-cli` commands continue to work without modification.
 
 ---
 

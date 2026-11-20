@@ -44,7 +44,7 @@ The route entry creation above is identical for every group type — it simply p
 
 ## Dynamic Ordered ECMP
 
-Dynamic Ordered ECMP extends the unordered model by sorting members according to a priority value. Each member carries a `SEQUENCE_ID` attribute, and the ASIC evaluates members in sequence-ID order rather than treating them as an unordered set. This is useful when the forwarding policy requires deterministic member selection priority — for example, preferring a local next hop over a remote tunnel endpoint. `vnetorch` uses this type for VxLAN overlay groups.
+Dynamic Ordered ECMP extends the unordered model by fixing the order of the members in the group. Each member carries a `SEQUENCE_ID` attribute that sets its position, so the ASIC maps hash buckets to members in a deterministic, consistent way — for example, the same set of next hops produces the same bucket-to-member mapping on every device, and the mapping stays predictable after members are added or removed. All members still carry traffic; ordered ECMP is not a priority or failover scheme. Both `routeorch` and `vnetorch` (for VxLAN overlay groups) select this type when ordered ECMP is enabled and supported.
 
 Ordered ECMP requires two conditions to both be true:
 
@@ -52,7 +52,7 @@ Ordered ECMP requires two conditions to both be true:
 
 2. **ASIC capability** — not all ASICs support this type. When `switchorch` receives `ordered_ecmp: "true"`, it probes the ASIC to confirm support. Only if the ASIC confirms does `m_orderedEcmpEnable` become `true`.
 
-If either condition is false, `routeorch` falls back to `DYNAMIC_UNORDERED_ECMP`.
+If either condition is false, `routeorch` and `vnetorch` fall back to `DYNAMIC_UNORDERED_ECMP`.
 
 The capability probe at startup:
 
@@ -70,7 +70,7 @@ if (status == SAI_STATUS_SUCCESS) {
 }
 ```
 
-The result is published to STATE_DB as `SWITCH_CAPABILITY_TABLE|ordered_ecmp_capable`. When `routeorch` creates a group, it checks this flag to decide the type:
+The result is recorded in STATE_DB as an ordered-ECMP capability field in the `SWITCH_CAPABILITY|switch` entry. When `routeorch` creates a group, it checks the enabled flag held by `switchorch` to decide the type:
 
 ```cpp
 // routeorch.cpp — selecting group type based on ASIC capability
@@ -89,21 +89,21 @@ grp_attr.id        = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
 grp_attr.value.s32 = SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP;
 sai_next_hop_group_api->create_next_hop_group(&group_oid, switch_id, 1, &grp_attr);
 
-/* Member — adds SEQUENCE_ID for priority ordering (lower value = higher priority) */
+/* Member — adds SEQUENCE_ID to fix the member's position in the group */
 sai_attribute_t mbr_attrs[4];
 mbr_attrs[0].id        = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID;
 mbr_attrs[0].value.oid = group_oid;
 mbr_attrs[1].id        = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
-mbr_attrs[1].value.oid = local_nh_oid;       /* resolved via neighOrch */
+mbr_attrs[1].value.oid = nh1_oid;            /* resolved via neighOrch */
 mbr_attrs[2].id        = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID;
-mbr_attrs[2].value.u32 = 1;                  /* ← preferred path (unique to ordered ECMP) */
+mbr_attrs[2].value.u32 = 1;                  /* ← position 1 (unique to ordered ECMP) */
 mbr_attrs[3].id        = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT;
 mbr_attrs[3].value.u32 = 1;
 sai_next_hop_group_api->create_next_hop_group_member(&member_oid, switch_id, 4, mbr_attrs);
 
-/* Second member — lower priority (fallback) */
-mbr_attrs[1].value.oid = tunnel_nh_oid;
-mbr_attrs[2].value.u32 = 2;                  /* ← fallback path */
+/* Second member — next position; both members carry traffic */
+mbr_attrs[1].value.oid = nh2_oid;
+mbr_attrs[2].value.u32 = 2;                  /* ← position 2 */
 sai_next_hop_group_api->create_next_hop_group_member(&member_oid, switch_id, 4, mbr_attrs);
 ```
 
@@ -338,9 +338,9 @@ exit
 
 The route-ingestion pipeline described in [Route Ingestion](24_load_balancing.md#route-ingestion-fpmsyncd) carries equal-cost routes without weights. When W-ECMP is active, FRR includes per-next-hop weights in the route updates it sends to `fpmsyncd` over the FPM socket. `fpmsyncd` extracts these weights alongside the next hops.
 
-> **Netlink weight offset**: The FPM socket carries route updates in netlink message format. In this format, next-hop weights are zero-based (a weight of 0 means "weight 1"). `fpmsyncd` adds 1 when parsing these messages so the value written to APPL_DB reflects the true weight.
+> **Netlink weight offset**: The FPM socket carries route updates in netlink message format. In nexthop-group messages (`NHA_GROUP`), weights are zero-based (a weight of 0 means "weight 1"), so `fpmsyncd` adds 1 to each weight so the value written to APPL_DB reflects the true weight. For individual next hops in a route message, `fpmsyncd` uses the weight as returned and only replaces a weight of 0 with 1.
 
-This correction applies both to individual next-hop weights and to nexthop-group messages:
+The two code paths handle weights as follows:
 
 ```cpp
 // fpmsyncd/routesync.cpp — extracting per-next-hop weight (individual)
@@ -430,20 +430,20 @@ CBF uses two APPL_DB tables:
 
 | Table | Key | Fields | Purpose |
 |---|---|---|---|
-| `CLASS_BASED_NEXT_HOP_GROUP_TABLE` | Group name | `members`, `selection_map` | Defines a CBF group with its member NHGs and the map that selects among them. |
-| `FC_TO_NHG_INDEX_MAP_TABLE` | Map name | `fc → index` pairs | Maps each forwarding-class value to a member index in the group. |
+| `CLASS_BASED_NEXT_HOP_GROUP_TABLE` | Group name | `members`, `selection_map` | Defines a CBF group with its member NHGs and the map that selects among them. Consumed by `cbfnhgorch`. |
+| `FC_TO_NHG_INDEX_MAP_TABLE` | Map name | `fc → index` pairs | Maps each forwarding-class value to a member index in the group. Consumed by `nhgmaporch`. |
 
 ### SAI Calls
 
-`cbfnhgorch` creates a SAI group with type `CLASS_BASED` and attaches a `NEXT_HOP_GROUP_MAP`:
+Two modules cooperate. `nhgmaporch` (`NhgMapOrch`) creates the forwarding-class-to-index `NEXT_HOP_GROUP_MAP` from `FC_TO_NHG_INDEX_MAP_TABLE`. `cbfnhgorch` then creates a SAI group with type `CLASS_BASED` and references that map through its `selection_map` field:
 
 ```c
-// Step 1 — create a forwarding-class → member-index map
+// Step 1 — nhgmaporch creates a forwarding-class → member-index map
 map.TYPE              = SAI_NEXT_HOP_GROUP_MAP_TYPE_FORWARDING_CLASS_TO_INDEX
 map.MAP_TO_VALUE_LIST = { fc=0 → idx=0, fc=1 → idx=0, fc=7 → idx=1 }
 create_next_hop_group_map(&map_oid, ...)
 
-// Step 2 — create the group with SELECTION_MAP pointing to that map
+// Step 2 — cbfnhgorch creates the group with SELECTION_MAP pointing to that map
 group.TYPE            = SAI_NEXT_HOP_GROUP_TYPE_CLASS_BASED
 group.CONFIGURED_SIZE = 2                  // number of member slots
 group.SELECTION_MAP   = map_oid            // forwarding-class → index lookup

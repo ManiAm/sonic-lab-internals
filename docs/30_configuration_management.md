@@ -221,7 +221,7 @@ Redis itself is a plain key-value store with no schema — it accepts whatever d
 
 - **CVL (Config Validation Library)** — a Go library called by Translib to validate each edit individually before the Redis write is committed. Used by `sonic-cli` (KLISH), RESTCONF, and gNMI.
 
-- **`sonic_yang`** — a Python library that validates the entire resulting configuration at once. Used by `config apply-patch`, `config replace`, and `config reload`.
+- **`sonic_yang`** — a Python library that validates the entire resulting configuration at once. Used by `config apply-patch` and `config replace`.
 
 Not every writer goes through YANG validation. Direct writes via `config load`, `sonic-cfggen --write-to-db`, or `redis-cli` bypass the YANG engines entirely and can store values the schema does not allow.
 

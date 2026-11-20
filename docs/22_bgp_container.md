@@ -26,25 +26,25 @@ Zebra has a third output — the **FPM** (Forwarding Plane Manager) interface �
 
 ## fpmsyncd — The Bridge to SONiC
 
-fpmsyncd is an SWSS sync daemon — part of the same `sonic-swss` codebase as orchagent and the other `*syncd` daemons — but it runs inside the BGP container rather than the SWSS container because it needs direct access to zebra's FPM socket. Its job is to connect zebra's route output to SONiC's Redis infrastructure.
+fpmsyncd is an SWSS sync daemon — part of the same `sonic-swss` codebase as orchagent and the other `*syncd` daemons — but it runs inside the BGP container rather than the SWSS container because it works directly alongside zebra as the receiving end of zebra's FPM connection. Its job is to connect zebra's route output to SONiC's Redis infrastructure.
 
 fpmsyncd works as following:
 
-1. At startup, fpmsyncd opens a TCP socket to zebra's FPM interface.
-2. Zebra sends route updates (in netlink message format) through this socket.
+1. At startup, fpmsyncd listens on TCP `127.0.0.1:2620`, and zebra's FPM module (`dplane_fpm_nl`) connects to it as the FPM client.
+2. Zebra sends route updates (in netlink message format) over this connection.
 3. fpmsyncd parses the netlink messages and writes routes to APPL_DB.
 
 ```
 zebra (FPM socket) → fpmsyncd → APPL_DB:ROUTE_TABLE
 ```
 
-The original SONiC design had routes flowing through the kernel:
+An alternative would be to learn routes from the kernel instead:
 
 ```
-bgpd → zebra → kernel (netlink) → fpmsyncd → APPL_DB
+bgpd → zebra → kernel (netlink) → listener → APPL_DB
 ```
 
-The problem is netlink is **not reliable**. If the socket buffer overflows (which happens at scale with hundreds of thousands of routes), messages are silently dropped. The current design uses FPM for a direct, reliable path. FPM provides a reliable TCP connection between zebra and fpmsyncd — no messages are lost.
+The problem is that netlink notifications are **not reliable**. If the socket buffer overflows (which happens at scale with hundreds of thousands of routes), messages are silently dropped. SONiC uses FPM instead, which provides a direct, reliable TCP connection between zebra and fpmsyncd — no messages are lost.
 
 ## The Route's Journey Through SONiC
 
@@ -154,11 +154,18 @@ SONiC exposes routes at multiple points in the pipeline. Quick reference:
 
 ## Managing FRR Configuration
 
-Because SONiC relies on CONFIG_DB as its single source of truth, managing FRR introduces a challenge known as the **split-brain problem**. FRR has its own traditional CLI called `vtysh`. If a network engineer logs into `vtysh` and configures a route, FRR knows about it — but CONFIG_DB does not. On reboot, that configuration is lost. SONiC solves this by offering two operating modes.
+Because SONiC relies on CONFIG_DB as its single source of truth, managing FRR introduces a challenge known as the **split-brain problem**. FRR has its own traditional CLI called `vtysh`. If a network engineer logs into `vtysh` and configures a route, FRR knows about it — but CONFIG_DB does not. On reboot, that configuration is lost. SONiC handles this through the `docker_routing_config_mode` field in `DEVICE_METADATA`, which decides whether SONiC generates FRR's configuration or leaves it to the operator:
 
-### Unified Mode (Default and Recommended)
+| Mode                  | Who generates FRR config       | FRR config files                     |
+|-----------------------|--------------------------------|--------------------------------------|
+| `separated` (default) | SONiC, from CONFIG_DB          | One file per daemon (`bgpd.conf`, `zebra.conf`, ...) |
+| `unified`             | SONiC, from CONFIG_DB          | One integrated `frr.conf`            |
+| `split`               | The operator, through `vtysh`  | One file per daemon, persisted as saved |
+| `split-unified`       | The operator, through `vtysh`  | One integrated `frr.conf`, persisted as saved |
 
-In Unified Mode, CONFIG_DB is the single source of truth. The user configures the switch through the SONiC CLI (Click or Klish), and every command is written to CONFIG_DB.
+### SONiC-Managed Modes: `separated` and `unified`
+
+In `separated` mode (the default) and `unified` mode, SONiC generates FRR's configuration from CONFIG_DB. The user configures the switch through the SONiC CLI (Click or Klish), and every command is written to CONFIG_DB. The main difference between them is how the generated configuration is laid out on disk: `separated` writes a separate config file for each FRR daemon, while `unified` writes a single integrated `frr.conf`.
 
 ```mermaid
 %%{init: {"flowchart": {"diagramPadding": 200}}}%%
@@ -171,34 +178,34 @@ graph TD
         config_db[("CONFIG_DB<br/>(Redis)")]
 
         subgraph bgp["bgp container"]
-            frrcfgd["frrcfgd / bgpcfgd"]
+            bgpcfgd["bgpcfgd (default)<br/>or frrcfgd"]
             frr["FRR daemons<br/>(bgpd, ospfd, zebra, ...)"]
             vtysh["vtysh"]
         end
 
         cli -- "config commands" --> config_db
-        config_db -- "routing config" --> frrcfgd
-        frrcfgd -- "pushes config" --> frr
+        config_db -- "routing config" --> bgpcfgd
+        bgpcfgd -- "pushes config" --> frr
         config_db -- "all other config" --> other
         vtysh -. "direct config (not persistent)" .-> frr
     end
 ```
 
-**At boot**: A tool called `sonic-cfggen` reads the saved CONFIG_DB and generates FRR startup files (`frr.conf`, `bgpd.conf`, etc.), so the routing daemons start with the correct configuration without any manual intervention.
+**At boot**: A tool called `sonic-cfggen` reads the saved CONFIG_DB and generates FRR startup files (per-daemon files such as `bgpd.conf` and `zebra.conf` in `separated` mode, or a single `frr.conf` in `unified` mode), so the routing daemons start with the correct configuration without any manual intervention. The integrated `frr.conf` is rendered from frrcfgd's templates. This affects only the startup file: `bgpcfgd` still applies runtime changes unless `frr_mgmt_framework_config` is `true`.
 
 **At runtime**: When a user makes a change through the CLI, CONFIG_DB is updated and its subscribers react:
 
-- For **routing configuration** (BGP neighbors, OSPF areas, route maps, etc.), a background daemon called `frrcfgd` (or `bgpcfgd` in older versions) monitors CONFIG_DB inside the BGP container. When it detects a routing change, it translates it and pushes the configuration directly into the running FRR daemons. FRR then installs the resulting routes through the FPM pipeline described above.
+- For **routing configuration** (BGP neighbors, OSPF areas, route maps, etc.), a background daemon called `bgpcfgd` monitors CONFIG_DB inside the BGP container. When it detects a routing change, it translates it and pushes the configuration directly into the running FRR daemons. FRR then installs the resulting routes through the FPM pipeline described above. (An alternative daemon, `frrcfgd`, takes over this role only when `DEVICE_METADATA` sets `frr_mgmt_framework_config` to `true`, so that FRR is configured through the SONiC management framework.)
 
 - For **all other configuration** (ports, interfaces, VLANs, LAG, LLDP, SNMP, DHCP, system settings, etc.), the respective subscribers pick up the changes from CONFIG_DB and apply them within their own scope.
 
 You can still use `vtysh` to inspect the routing table or test changes (shown as the dashed line in the diagram), but changes made through `vtysh` bypass CONFIG_DB — they will not survive a reboot or container restart.
 
-### Split Mode (Advanced Use Cases)
+### Operator-Managed Modes: `split` and `split-unified` (Advanced Use Cases)
 
-In Split Mode, you intentionally break the synchronization link between SONiC and FRR. The `frrcfgd` daemon stops pushing updates to FRR. You manage physical ports and IP addresses via SONiC, but manage routing protocols entirely through FRR's `vtysh` shell, saving configuration directly to `frr.conf`.
+In `split` mode, you intentionally break the synchronization link between SONiC and FRR. SONiC stops generating FRR configuration from CONFIG_DB. You manage physical ports and IP addresses via SONiC, but manage routing protocols entirely through FRR's `vtysh` shell. Configuration saved from `vtysh` goes to the per-daemon config files, which persist across restarts. `split-unified` mode works the same way, except that FRR keeps its configuration in a single integrated `frr.conf`.
 
-Use Split Mode when:
+Use the split modes when:
 
 - You need highly complex routing topologies or advanced route maps that the SONiC management framework doesn't support yet.
 - You prefer traditional industry CLIs for routing configuration.

@@ -106,7 +106,7 @@ SONiC's default policy on the DX010 assigns:
 
 | Queue | Traffic types                           | Why this priority                            |
 |-------|-----------------------------------------|----------------------------------------------|
-| Q4    | BGP, LACP, ARP, NDP, LLDP, UDLD         | Critical control-plane protocols             |
+| Q4    | BGP, LACP, ARP, NDP, LLDP, UDLD, DHCP, DHCPv6 | Critical control-plane protocols             |
 | Q1    | ip2me (packets addressed to the switch) | Important but less time-critical             |
 | Q0    | TTL errors                              | Best-effort — acceptable to drop under load  |
 
@@ -533,7 +533,7 @@ Q1     IP2ME                         TRAP    1     6000        6000        DROP
 Q0     TTL_ERROR                     TRAP    0     600         600         DROP
 ```
 
-Notice that Section 1 has 5 groups but Section 2 has 10 SAI trap objects — each group expands its `trap_ids` into individual SAI traps (e.g., the `arp` group with `arp_req,arp_resp,neigh_discovery` becomes three separate SAI objects). Also notice that `TTL_ERROR` appears in Section 2 but not in Section 1: `CoppOrch` hardcodes it onto the switch's default trap group at startup, bypassing `coppmgrd` entirely, so TTL errors are always trapped regardless of the JSON configuration.
+Notice that Section 1 has 5 groups but Section 2 has 10 SAI trap objects — each group expands its `trap_ids` into individual SAI traps (e.g., the `queue4_group2` group with `arp_req,arp_resp,neigh_discovery` becomes three separate SAI objects). Also notice that `TTL_ERROR` appears in Section 2 but not in Section 1: `CoppOrch` hardcodes it onto the switch's default trap group at startup, bypassing `coppmgrd` entirely, so TTL errors are always trapped regardless of the JSON configuration.
 
 **Section 3 — Installation Status (STATE_DB).** Lists every individual trap ID that was expected to be programmed — those that passed [feature gating](#feature-gating) and were published to APPL_DB. Each row is one trap ID with its STATE_DB confirmation. Trap IDs whose features are disabled are summarized separately at the bottom.
 

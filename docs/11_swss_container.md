@@ -24,23 +24,30 @@ There is no fixed ordering between manager daemons and sync daemons — they run
 
 Manager daemons handle **CONFIG_DB updates** and transform them into operational state. Their naming convention is `*mgrd` (manager daemon). Each daemon subscribes to specific CONFIG_DB tables (via SubscriberStateTable), validates the incoming configuration, applies it to the Linux kernel, and pushes the processed result to APPL_DB (via ProducerStateTable) for orchagent to consume.
 
+Manager daemons that run **inside the SWSS container**:
+
 | Daemon       | CONFIG_DB Tables                                            | What It Does                               |
 |--------------|-------------------------------------------------------------|--------------------------------------------|
-| `portmgrd`   | PORT                                                        | Configures port admin state, MTU, speed in kernel + APPL_DB |
+| `portmgrd`   | PORT                                                        | Configures port admin state and MTU in kernel + APPL_DB |
 | `intfmgrd`   | INTERFACE, LOOPBACK_INTERFACE                               | Configures IP addresses on interfaces |
 | `vlanmgrd`   | VLAN, VLAN_MEMBER                                           | Creates VLAN devices in kernel, updates APPL_DB |
-| `buffmgrd`   | BUFFER_POOL, BUFFER_PROFILE, BUFFER_PG                      | Configures buffer pool, profile, and priority group settings |
+| `buffermgrd` | BUFFER_POOL, BUFFER_PROFILE, BUFFER_PG                      | Configures buffer pool, profile, and priority group settings |
 | `vrfmgrd`    | VRF                                                         | Creates VRF devices in the kernel |
 | `coppmgrd`   | COPP_TRAP, COPP_GROUP, FEATURE                              | Configures control-plane policing (CoPP) trap groups and rates |
 | `nbrmgrd`    | NEIGH                                                       | Manages static neighbor entries |
-| `teammgrd`   | LAG, LAG_MEMBER                                             | Manages LAG (port-channel) interfaces and member ports |
 | `tunnelmgrd` | TUNNEL, LOOPBACK_INTERFACE                                  | Configures IP-in-IP and other tunnel interfaces |
 | `vxlanmgrd`  | VNET, VXLAN_TUNNEL, VXLAN_TUNNEL_MAP, VXLAN_EVPN_NVO        | Configures VxLAN tunnels and EVPN NVO mappings |
-| `natmgrd`    | STATIC_NAT, STATIC_NAPT, NAT_POOL, NAT_BINDINGS, NAT_GLOBAL | Configures static and dynamic NAT/NAPT rules |
-| `sflowmgrd`  | SFLOW, SFLOW_SESSION, PORT                                  | Configures sFlow sampling and collector sessions |
-| `macsecmgrd` | MACSEC_PROFILE, PORT                                        | Configures MACsec encryption profiles on ports |
 | `fabricmgrd` | FABRIC_MONITOR_DATA, FABRIC_MONITOR_PORT                    | Monitors fabric links (chassis systems) |
-| `stpmgrd`    | STP_GLOBAL, STP_VLAN, STP_VLAN_PORT, STP_PORT               | Configures Spanning Tree Protocol parameters |
+
+Manager daemons that follow the same pattern but run in **other feature containers**:
+
+| Daemon       | CONFIG_DB Tables                                            | Container | What It Does |
+|--------------|-------------------------------------------------------------|-----------|--------------|
+| `teammgrd`   | PORTCHANNEL, PORTCHANNEL_MEMBER                             | teamd     | Manages LAG (port-channel) interfaces and member ports |
+| `natmgrd`    | STATIC_NAT, STATIC_NAPT, NAT_POOL, NAT_BINDINGS, NAT_GLOBAL | NAT       | Configures static and dynamic NAT/NAPT rules |
+| `sflowmgrd`  | SFLOW, SFLOW_SESSION, PORT                                  | sflow     | Configures sFlow sampling and collector sessions |
+| `macsecmgrd` | MACSEC_PROFILE, PORT                                        | macsec    | Configures MACsec encryption profiles on ports |
+| `stpmgrd`    | STP_GLOBAL, STP_VLAN, STP_VLAN_PORT, STP_PORT               | stp       | Configures Spanning Tree Protocol parameters |
 
 ## Sync Daemons (*syncd in SWSS)
 

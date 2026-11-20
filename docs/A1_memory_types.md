@@ -85,8 +85,8 @@ Binary CAM supports only two bit states — **0** and **1** — so every lookup 
 
 | Use Case | Why BCAM Fits |
 |----------|--------------|
-| **MAC address table (L2 forwarding)** | A destination MAC is looked up as an exact 48-bit value to find the output port — the classic BCAM use case |
-| **ARP / NDP cache** | IP-to-MAC mappings are exact key-value pairs |
+| **MAC address table (L2 forwarding)** | A destination MAC is looked up as an exact 48-bit value to find the output port. Modern switch ASICs normally hold the main table in SRAM hash tables, with BCAM as a small overflow stage |
+| **ARP / NDP cache** | IP-to-MAC mappings are exact key-value pairs; like MAC entries, host routes are normally stored in SRAM hash tables |
 | **Exact-match ACL rules** | Rules that require full equality on every field are more efficient in BCAM than TCAM (lower power, smaller cells) |
 | **Hash collision resolution** | When a hash-based L2/L3 table produces collisions, BCAM is often used in the secondary stage to find the exact entry |
 
@@ -104,12 +104,12 @@ TCAM entries are evaluated in **priority order**, and the highest-priority match
 | Use Case | Why TCAM Fits |
 |----------|--------------|
 | **ACLs (Access Control Lists)** | ACL rules almost always include wildcards (e.g., "any port," "match subnet /16") |
-| **Longest Prefix Match (LPM) routing** | IPv4/IPv6 routing tables use prefix masks (/24, /48, etc.); TCAM evaluates and prioritizes all prefixes in parallel |
+| **Longest Prefix Match (LPM) routing** | IPv4/IPv6 routing tables use prefix masks (/24, /48, etc.); TCAM evaluates and prioritizes all prefixes in parallel. Depending on the ASIC, LPM may instead use algorithmic SRAM structures |
 | **QoS classification** | Rules like "match DSCP 46 on 10.0.0.0/8" combine exact fields with masks |
 | **Policy-Based Routing (PBR)** | PBR rules match on combinations of source IP, destination IP, ports, and DSCP — often with wildcards |
 | **Security filtering** | Matching ranges, subnets, and flexible patterns for firewall-like filters |
 
-**Why TCAM is scarce.** Parallel comparison across all entries requires dedicated comparison logic per bit per entry. This makes TCAM cells roughly **6× larger** than equivalent SRAM cells and significantly more power-hungry — the most silicon-expensive memory in a switch. ASICs typically include only enough TCAM for a few thousand to tens of thousands of entries, depending on the platform and how the TCAM is partitioned across features. Networks frequently "run out of TCAM" when many ACLs, VRFs, or routing policies are installed.
+**Why TCAM is scarce.** Parallel comparison across all entries requires dedicated comparison logic per bit per entry. A typical TCAM cell uses **16 transistors** versus 6 for an SRAM cell, making it roughly **2–3× larger** in area and significantly more power-hungry — the most silicon-expensive memory in a switch. ASICs typically include only enough TCAM for a few thousand to tens of thousands of entries, depending on the platform and how the TCAM is partitioned across features. Networks frequently "run out of TCAM" when many ACLs, VRFs, or routing policies are installed.
 
 
 ## Quick Comparison
@@ -123,3 +123,7 @@ TCAM entries are evaluated in **priority order**, and the highest-priority match
 | **Cost per bit** | High | Low | Very high | Very high |
 | **Volatile?** | Yes | Yes | Yes | Yes |
 | **Typical use in switches** | Caches, pipeline registers | CPU RAM, deep buffers | MAC tables, ARP cache | ACLs, LPM routes, QoS |
+
+---
+
+**Previous**: [← Troubleshooting](36_troubleshooting.md)

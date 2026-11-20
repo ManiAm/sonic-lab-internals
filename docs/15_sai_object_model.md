@@ -20,7 +20,7 @@ SONiC interacts with an object through four operations:
 
 The diagram below uses a port to show how the four operations work together:
 
-- **Create** builds the port with its initial attributes — speed, MTU, and admin state — and returns an object ID (`oid:0x2100000001a33f`). That OID is the handle every later call uses.
+- **Create** builds the port with its initial attributes — speed, MTU, and admin state — and returns an object ID (`oid:0x1000000000003`). That OID is the handle every later call uses.
 - **Set** changes a single attribute on the existing port, such as disabling it by writing `ADMIN_STATE = false`.
 - **Get** reads one or more attributes back, returning their current values.
 - **Remove** deletes the port entirely, using the same OID.
@@ -374,7 +374,7 @@ sai_query_attribute_enum_values_capability(
     &values);                               /* filled with the supported values */
 ```
 
-`SwitchOrch` calls this at startup and publishes the results in STATE_DB as `SWITCH_CAPABILITY_TABLE`. Other modules read that table before attempting to use a feature the ASIC might not support. For example, if the ASIC does not support a particular next-hop group type, orchagent falls back to a supported one instead of sending a call that would fail.
+`SwitchOrch` calls this at startup and publishes the results in STATE_DB under the `SWITCH_CAPABILITY|switch` key. Other modules read that entry before attempting to use a feature the ASIC might not support. For example, if the ASIC does not support a particular next-hop group type, orchagent falls back to a supported one instead of sending a call that would fail.
 
 ### Querying Attribute Support
 
@@ -457,7 +457,7 @@ attr.value.ptr = (void *)on_port_state_change;
 sai_switch_api->set_switch_attribute(switch_oid, &attr);
 ```
 
-The vendor SAI invokes that callback on its own thread whenever the event occurs. In SONiC, the callback runs inside syncd, which publishes the event on an ASIC_DB notification channel. Orchagent then handles it on the notification thread described in [The Notification Thread](12_orchagent.md#the-notification-thread).
+The vendor SAI invokes that callback on its own thread whenever the event occurs. In SONiC, the callback runs inside syncd, which publishes the event on an ASIC_DB notification channel. Orchagent then handles it in its main select loop, as described in [SAI Notifications](12_orchagent.md#sai-notifications).
 
 | Notification            | What changed                 |
 |-------------------------|------------------------------|

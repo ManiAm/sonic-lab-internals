@@ -241,13 +241,13 @@ The following Lua plugins are registered as FlexCounter plugins:
 | `port_rates.lua` | PortsOrch | PORT_STAT | Computes per-port TX/RX rates (BPS, PPS) and FEC Bit Error Rates |
 | `port_flr.lua` | PortsOrch | PORT_STAT | Computes Frame Loss Ratio per port |
 | `rif_rates.lua` | IntfsOrch | RIF_STAT | Computes per-RIF TX/RX rates |
-| `tunnel_rates.lua` | VxlanOrch | TUNNEL_STAT | Computes per-tunnel TX/RX rates |
+| `tunnel_rates.lua` | VxlanTunnelOrch | TUNNEL_STAT | Computes per-tunnel TX/RX rates |
 | `trap_rates.lua` | CoppOrch | FLOW_CNT_TRAP | Computes per-trap TX/RX rates |
-| `watermark_queue.lua` | PortsOrch | QUEUE_WATERMARK | Tracks peak queue occupancy since last clear |
-| `watermark_pg.lua` | PortsOrch | PG_WATERMARK | Tracks peak priority-group occupancy since last clear |
-| `watermark_bufferpool.lua` | BufferOrch | BUFFER_POOL_WATERMARK | Tracks peak buffer-pool occupancy since last clear |
-| `pfc_detect_<platform>.lua` | PfcWdOrch | PFC_WD | Detects PFC storm conditions (platform-specific logic) |
-| `pfc_restore.lua` | PfcWdOrch | PFC_WD | Detects PFC storm recovery |
+| `watermark_queue.lua` | PortsOrch | QUEUE_WATERMARK_STAT | Tracks peak queue occupancy since last clear |
+| `watermark_pg.lua` | PortsOrch | PG_WATERMARK_STAT | Tracks peak priority-group occupancy since last clear |
+| `watermark_bufferpool.lua` | BufferOrch | BUFFER_POOL_WATERMARK_STAT | Tracks peak buffer-pool occupancy since last clear |
+| `pfc_detect_<platform>.lua` | PfcWdSwOrch | PFC_WD | Detects PFC storm conditions (platform-specific logic) |
+| `pfc_restore.lua` | PfcWdSwOrch | PFC_WD | Detects PFC storm recovery |
 | `drop_monitor.lua` | DebugCounterOrch | DEBUG_COUNTER | Monitors debug counter drop events |
 
 > **Note:** Some plugins are vendor-specific. For example, `nvda_port_trim_drop.lua` (NVIDIA trim-packet drop calculation) and `pfc_detect_mellanox.lua` are loaded only on their respective platforms.
@@ -279,7 +279,7 @@ Multiple components read COUNTERS_DB:
 | **SNMP** (`docker-snmp`)                 | Maps SNMP MIB OIDs (like `ifInOctets`) to SAI stat IDs in COUNTERS_DB. |
 | **gNMI telemetry** (`docker-sonic-gnmi`) | Streams counter values to external collectors at the configured interval. |
 | **WatermarkOrch**                        | Reads watermark counters from COUNTERS_DB and writes user/persistent watermark tables. |
-| **PfcWdOrch**                            | Reads PFC counters to detect priority-flow-control storms. |
+| **PfcWdSwOrch**                          | Reads PFC counters to detect priority-flow-control storms. |
 
 None of these consumers call SAI directly. They all read from COUNTERS_DB, which decouples counter consumption from counter collection.
 

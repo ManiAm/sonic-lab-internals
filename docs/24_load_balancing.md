@@ -92,14 +92,14 @@ sai_switch_api->set_switch_attribute(gSwitchId, &attr);
 
 ## SAI Next-Hop Group Types
 
-The **group type** attribute determines *how the ASIC selects among the members* — whether it hashes the packet and picks a member deterministically (standard ECMP), evaluates members in priority order (ordered ECMP), maps them to fixed bucket positions (fine-grain ECMP), or steers by forwarding class (class-based).
+The **group type** attribute determines *how the ASIC selects among the members* — whether it hashes the packet and picks a member deterministically (standard ECMP), hashes across members kept in a fixed, explicit order (ordered ECMP), maps them to fixed bucket positions (fine-grain ECMP), or steers by forwarding class (class-based).
 
 SAI defines the following group types in `sainexthopgroup.h`:
 
 | SAI Group Type | Purpose |
 |---|---|
 | **Dynamic Unordered ECMP** | Standard ECMP. Members are unordered; the ASIC hashes and selects among them. This is the default type. |
-| **Dynamic Ordered ECMP** | Like standard ECMP, but members are **sorted by priority** (via `SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID`). Used when `ordered_ecmp` is enabled and the ASIC advertises support at init time. |
+| **Dynamic Ordered ECMP** | Like standard ECMP, but members are kept in a **fixed order** (via `SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID`), so the hash-bucket-to-member mapping is deterministic. All members still carry traffic. Used when `ordered_ecmp` is enabled and the ASIC advertises support at init time. |
 | **Fine-Grain ECMP** | Software-managed, fixed-size bucket array. Supports bank-scoped failover. |
 | **Class-Based** | Members are selected by **forwarding class** rather than (or in combination with) hash. Uses a `NEXT_HOP_GROUP_MAP` to map forwarding-class values to member indices. |
 | **ECMP With Members** | Group-level member list and weight list in a single bulk SAI call. Used by the P4Runtime path for weighted ECMP (WCMP). |
@@ -125,7 +125,7 @@ typedef enum _sai_next_hop_group_type_t
 } sai_next_hop_group_type_t;
 ```
 
-The next hops themselves are independent of the group type — the same next-hop object can be referenced by groups of different types. However, some group types require additional attributes on their members. For example, ordered ECMP members carry a `SEQUENCE_ID` for priority, fine-grain ECMP members carry an `INDEX` for bucket position, and protection group members carry a `CONFIGURED_ROLE` (primary or standby). These per-member attributes are covered in each type's [dedicated section](25_nhg_types.md).
+The next hops themselves are independent of the group type — the same next-hop object can be referenced by groups of different types. However, some group types require additional attributes on their members. For example, ordered ECMP members carry a `SEQUENCE_ID` that fixes their position in the group, fine-grain ECMP members carry an `INDEX` for bucket position, and protection group members carry a `CONFIGURED_ROLE` (primary or standby). These per-member attributes are covered in each type's [dedicated section](25_nhg_types.md).
 
 
 ### How SONiC Selects the Group Type
@@ -135,11 +135,14 @@ SONiC does not have a single "type selector". Instead, each group type is owned 
 | Input Table                                  | Orch Module   | Hard-coded SAI Group Type |
 |----------------------------------------------|---------------|---------------------------|
 | `ROUTE_TABLE` (default path)                 | `routeorch`   | `DYNAMIC_UNORDERED_ECMP` or `DYNAMIC_ORDERED_ECMP` |
+| `VNET_ROUTE_TUNNEL_TABLE` (VxLAN overlay)    | `vnetorch`    | `DYNAMIC_UNORDERED_ECMP` or `DYNAMIC_ORDERED_ECMP` |
 | `NEXTHOP_GROUP_TABLE`                        | `nhgorch`     | `DYNAMIC_UNORDERED_ECMP` (always) |
 | `FG_NHG` / `FG_NHG_PREFIX` / `FG_NHG_MEMBER` | `fgnhgorch`   | `FINE_GRAIN_ECMP` (always) |
 | `CLASS_BASED_NEXT_HOP_GROUP_TABLE`           | `cbfnhgorch`  | `CLASS_BASED` (always) |
 | `P4RT_TABLE`                                 | `WcmpManager` | `ECMP_WITH_MEMBERS` (always) |
 | `L2_NEXTHOP_GROUP_TABLE`                     | `l2nhgorch`   | `BRIDGE_PORT` (always) |
+
+`routeorch` and `vnetorch` are the only modules that choose between two types: both create `DYNAMIC_ORDERED_ECMP` groups when ordered ECMP is enabled and the ASIC supports it (see [Dynamic Ordered ECMP](25_nhg_types.md#dynamic-ordered-ecmp)), and `DYNAMIC_UNORDERED_ECMP` groups otherwise.
 
 
 ## Route Programming (routeorch)
@@ -228,9 +231,13 @@ A membership change starts in the control plane and propagates through the same 
 
 In all cases, `fpmsyncd` writes the updated `ROUTE_TABLE` entry to APPL_DB. `routeorch` detects the change and must reconcile the ASIC state.
 
-#### routeorch — Group Recreation
+#### routeorch — Member Updates and Group Recreation
 
-`routeorch` does **not** incrementally add or remove individual members. Instead, when a route's next-hop set changes, it uses a **make-before-break** strategy — creating the new group first, swinging the route to it, and only then deleting the old group. This ensures the route always points to a valid forwarding group; there is no window where packets would be dropped due to a missing group.
+`routeorch` handles two kinds of change differently.
+
+**A next hop or its port goes down or comes back up.** When a next hop becomes unusable (for example, its port goes operationally down), `routeorch` removes that next hop's member from every existing group that contains it (`invalidnexthopinNextHopGroup()`). When the next hop becomes usable again, it re-adds the member to those groups (`validnexthopinNextHopGroup()`). The groups and the routes pointing at them stay in place, so the data plane reacts without waiting for FRR to send an updated route.
+
+**A route's next-hop set changes.** When an updated `ROUTE_TABLE` entry arrives with a different list of next hops, `routeorch` does not edit the existing group. Instead, it uses a **make-before-break** strategy — creating the new group first, swinging the route to it, and only then deleting the old group. This ensures the route always points to a valid forwarding group; there is no window where packets would be dropped due to a missing group.
 
 1. Build a new `NextHopGroupKey` from the updated next-hop list.
 2. Check if a group with the new key already exists ([NHG Reuse](#nhg-reuse)) — if so, skip to step 4.
@@ -248,7 +255,7 @@ sai_next_hop_group_api->remove_next_hop_group_member(member_oid);
 sai_next_hop_group_api->remove_next_hop_group(group_oid);
 ```
 
-Example — a three-path route loses one path (`10.1.3.1` goes down):
+Example — FRR withdraws one path (`10.1.3.1`) from a three-path route:
 
 ```text
 BEFORE (3 paths):
@@ -278,7 +285,7 @@ Route 10.0.0.0/24 → group_oid_B          group_oid_A (deleted)
 4. `decreaseNextHopRefCount()` on old group (`group_oid_A`) → ref count reaches 0
 5. `removeNextHopGroup()` removes 3 members (bulk), then deletes the group
 
-This make-before-break approach guarantees hitless transitions but means every membership change involves creating a new group in the ASIC, even if only one member was added or removed.
+This make-before-break approach guarantees hitless transitions but means every change to a route's next-hop set involves creating a new group in the ASIC (unless a matching group already exists), even if only one next hop was added or removed.
 
 
 ## NHG Orch (Explicit Groups)
@@ -289,7 +296,7 @@ The sections above describe groups created implicitly by `routeorch` as a side e
 
 ### Incremental Member Updates
 
-Unlike `routeorch`, which recreates a group when its membership changes, `nhgorch` **diffs** the old and new member sets and applies only the differences — adding new members, removing missing ones, and updating weights on existing ones — without tearing down the group. This is possible because `nhgorch` manages groups explicitly — the group's identity is defined by its name in `NEXTHOP_GROUP_TABLE`, not derived from the member set.
+Unlike `routeorch`, which creates a new group when a route's next-hop set changes, `nhgorch` **diffs** the old and new member sets and applies only the differences — adding new members, removing missing ones, and updating weights on existing ones — without tearing down the group. This is possible because `nhgorch` manages groups explicitly — the group's identity is defined by its name in `NEXTHOP_GROUP_TABLE`, not derived from the member set.
 
 ```c
 /* Add a new member to an existing group */

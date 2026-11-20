@@ -14,7 +14,7 @@ The challenge is reconnecting the new software stack to the existing ASIC state 
 
 ## Why Warm Reboot Exists
 
-Every reboot causes some disruption. For operators running networks that carry production traffic around the clock, even a 25-second fast reboot disruption can be too much — especially when the reboot is for a routine software upgrade, not a failure recovery.
+Every reboot causes some disruption. For operators running networks that carry production traffic around the clock, the data-plane disruption of a fast reboot (under 30 seconds, typically around 25 s) can be too much — especially when the reboot is for a routine software upgrade, not a failure recovery.
 
 Warm reboot targets the use case of **hitless software upgrades**: upgrading the SONiC image (kernel, containers, configuration) with zero or near-zero packet loss. The switch continues forwarding traffic throughout the process. This lets operators upgrade switches during business hours without scheduling maintenance windows.
 
@@ -51,11 +51,11 @@ Operator runs: sudo warm-reboot
 │ 10. systemd starts services in dependency order                     │
 │ 11. database container starts:                                      │
 │     - Redis loads dump.rdb snapshot (pre-reboot state restored)     │
-│ 12. syncd starts in warm boot mode:                                 │
+│ 12. SWSS container starts:                                          │
+│     - orchagent enters reconciliation mode                          │
+│ 13. syncd starts (as swss's peer) in warm boot mode:                │
 │     - Reads saved VID↔RID map and SAI object tree                   │
 │     - Connects to ASIC without resetting it                         │
-│ 13. SWSS container starts:                                          │
-│     - orchagent enters reconciliation mode                          │
 │ 14. BGP container starts:                                           │
 │     - FRR re-establishes sessions with Graceful Restart             │
 │ 15. teamd container starts:                                         │
@@ -187,12 +187,12 @@ The database container starts first (it is a dependency for everything else). In
 2. Finds the `dump.rdb` snapshot in `/host/warmboot/`.
 3. Starts Redis by loading the snapshot, which reconstructs the pre-reboot in-memory state.
 
-After this step, all Redis databases contain exactly the same data they had before the reboot:
+After this step, the Redis databases contain the state saved by the trimmed snapshot (see [The Redis Snapshot](32_reboot_types.md#the-redis-snapshot)):
 
 - **APPL_DB** — routes, neighbors, and other application-level intent.
-- **ASIC_DB** — SAI objects that map to hardware entries.
+- **ASIC_DB** — SAI objects that map to hardware entries. Warm reboot keeps this database; fast and express reboot flush it before the save.
 - **CONFIG_DB** — the switch configuration.
-- **STATE_DB** — warm restart flags and operational state.
+- **STATE_DB** — only what survived the trim: `FDB_TABLE`, the warm-restart flags, and a few other tables. Most operational state is dropped and rebuilt by the services as they start.
 
 ### Syncd Container
 
@@ -470,8 +470,8 @@ The exact list of supported features depends on the SONiC version and the vendor
 
 ### When NOT to Use Warm Reboot
 
-- **Downgrading to an older version.** Warm reboot reconciliation assumes the new software understands the old state format. Older software may not understand state saved by newer software.
-- **ASIC SDK upgrade.** If the new SONiC image includes a different ASIC SDK version, the vendor SAI may not support warm restart across SDK versions. Use cold or fast reboot instead.
+- **Downgrading to an older version.** Warm reboot reconciliation assumes the new software understands the old state format. Older software may not understand state saved by newer software. Use cold reboot instead.
+- **ASIC SDK upgrade.** If the new SONiC image includes a different ASIC SDK version, warm reboot is not supported across the SDK change. Use cold or fast reboot instead (fast reboot reinitializes the ASIC).
 - **System is in a bad state.** If you suspect corrupted state (unexpected behavior, crashed daemons), warm reboot carries that state forward. Use cold reboot to start clean.
 - **Platform does not support it.** Some platforms or ASIC families lack SAI warm boot support entirely.
 
@@ -491,7 +491,7 @@ Fast Reboot:                          Warm Reboot:
    BGP re-converges                      Only diffs applied
         │                                     │
         v                                     v
-   ~25s data plane disruption            ~0s data plane disruption
+   <30s (typically ~25s) disruption      ~0s data plane disruption
 ```
 
 The trade-off is complexity. Fast reboot is simpler — it saves state to disk, resets everything, and restores from the saved state. If the restore fails, the system just re-learns everything (slower but safe). Warm reboot is more complex — it must maintain ASIC state across a software restart and reconcile it, which requires more sophisticated logic in syncd, orchagent, and every participating daemon.

@@ -93,7 +93,7 @@ SONiC uses two targets to separate infrastructure from application services. (Fo
 **`multi-user.target`** — SONiC places two critical services here so they start as part of ordinary system startup, before any SONiC application container:
 
 - **`database`** — starts the Redis container. Every other SONiC service needs Redis, so this must be up first.
-- **`config-setup`** — configuration initialization and migration. This is a one-shot host service, not a container. On a normal boot, the database container loads `config_db.json` into Redis during its own startup (see [`postStartAction`](#the-prestartaction-and-poststartaction-hooks) below); `config-setup` then runs version-migration scripts that adapt the saved configuration to the currently installed SONiC release. On first boot to a new image (or when no saved configuration exists), `config-setup` generates an initial configuration from minigraph, ZTP, or factory defaults and loads it into Redis.
+- **`config-setup`** — configuration initialization and migration. This is a one-shot host service, not a container. On a normal boot, the database container loads `config_db.json` into Redis during its own startup, runs the database schema migrator (`db_migrator`), and sets the `CONFIG_DB_INITIALIZED` flag (see [`postStartAction`](#the-prestartaction-and-poststartaction-hooks) below); `config-setup` simply waits for that to complete. On first boot to a new image (or when no saved configuration exists), `config-setup` takes over: it migrates the previous image's configuration or generates an initial configuration from minigraph, ZTP, or factory defaults, and loads it into Redis.
 
 By the time systemd reaches `sonic.target`, Redis is running and `CONFIG_DB` is loaded.
 
@@ -346,9 +346,9 @@ Useful fields on each entry:
 
 | Field | Meaning |
 |-------|---------|
-| `state` | `enabled` or `disabled` — whether this container should run at all. |
-| `auto_restart` | `enabled` or `disabled` — whether the container is restarted automatically after a critical failure. |
-| `delayed` | If set, the feature is started through a systemd `.timer` unit rather than immediately at boot. |
+| `state` | `enabled` or `disabled` — whether this container should run at all. Essential features such as `database` use `always_enabled`, which cannot be turned off. |
+| `auto_restart` | `enabled` or `disabled` — whether the container is restarted automatically after a critical failure. Some features list `always_enabled` here as well. |
+| `delayed` | If set, the feature is not started immediately at boot or on a config reload. `featured` starts it only after `PortInitDone` appears in APPL_DB, with a safety timeout so it is never blocked forever. Older images implemented this delay with systemd `.timer` units. Typical delayed features are monitoring and management services such as `snmp`, `lldp`, `telemetry`/`gnmi`, and `mgmt-framework`; check `show feature config` for the list on your image. |
 | `has_global_scope` / `has_per_asic_scope` | On multi-ASIC platforms (see note below), whether the feature runs once for the host, once per ASIC, or both. |
 | `high_mem_alert` | Whether high-memory-usage alerting is enabled for this container. |
 

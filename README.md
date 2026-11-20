@@ -66,9 +66,9 @@ Read in order — each document builds on the concepts from the previous ones.
 
 | #  | Topic | Description |
 |----|-------|-------------|
-| 22 | [The BGP Container and FRR](docs/22_bgp_container.md) | FRRouting, zebra, fpmsyncd, route programming, RIB/FIB mapping, unified/split mode |
+| 22 | [The BGP Container and FRR](docs/22_bgp_container.md) | FRRouting, zebra, fpmsyncd, route programming, RIB/FIB mapping, routing configuration modes |
 | 23 | [The BGP Route-Download Benchmark](docs/23_benchmark.md) | Measuring route programming rate end-to-end, pipeline stages, tooling, and measured results |
-| 24 | [Load Balancing](docs/24_load_balancing.md) | ECMP in SONiC — SAI next-hop group types, routeorch, weighted ECMP (WCMP), fine-grained ECMP, class-based forwarding, and the full weight pipeline |
+| 24 | [Load Balancing](docs/24_load_balancing.md) | ECMP in SONiC — key SAI objects, hash configuration, next-hop group types, routeorch next-hop group programming, NHG reuse and member lifecycle, and nhgorch |
 | 25 | [SAI Next-Hop Group Types](docs/25_nhg_types.md) | Per-type deep dive — Dynamic ECMP, Fine-Grain ECMP, W-ECMP, Class-Based Forwarding, Protection Groups, and Bridge Port groups |
 | 26 | [The DHCP Relay Container](docs/26_dhcp_relay.md) | DHCP relay agent — packet flow, CONFIG_DB tables, DHCPv4/v6, VLAN-to-server mapping, and VRF-aware relay |
 
@@ -96,3 +96,9 @@ Read in order — each document builds on the concepts from the previous ones.
 | 34 | [State Interactions](docs/34_state_interactions.md) | End-to-end data flows for routing, port events, VLAN, ARP |
 | 35 | [Logging](docs/35_logging.md) | Syslog, rsyslog routing, SWSS logging macros, SAI recording, log rotation, runtime tuning, techsupport, core dumps |
 | 36 | [Troubleshooting](docs/36_troubleshooting.md) | Debugging techniques for common SONiC problems |
+
+### Appendix
+
+| #  | Topic | Description |
+|----|-------|-------------|
+| A1 | [Memory Types in Networking Hardware](docs/A1_memory_types.md) | Volatile memory (SRAM, DRAM, HBM), non-volatile memory (ROM through flash), and content-addressable memory (BCAM, TCAM) |

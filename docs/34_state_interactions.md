@@ -45,7 +45,7 @@ When a new route is learned from a BGP peer:
 │ RouteOrch receives the event:                                                            │
 │ → Looks up next-hop 10.0.0.1 (must already exist in NEIGH_TABLE)                         │
 │ → Resolves to a SAI next-hop object                                                      │
-│ → Calls sai_route_api->create_route_entry()                                              │
+│ → Adds the route to EntityBulker, which programs routes in bulk SAI calls                │
 └──────────────────────────────────────────────┬───────────────────────────────────────────┘
                                                │
                                                v
@@ -101,26 +101,28 @@ When a physical link goes down (cable unplugged, remote end failure):
 ┌──────────────────────────────────────────────────────────────────────────────────────────┐
 │ Step 4: orchagent receives the event                                                     │
 │                                                                                          │
-│ orchagent's notification thread:                                                         │
-│ a) Updates APPL_DB: PORT_TABLE:Ethernet0 → oper_status=down                              │
-│ b) Calls SAI to update kernel host-interface state                                       │
+│ PortsOrch handles the notification in orchagent's main select loop:                      │
+│ a) Updates oper_status=down in APPL_DB (PORT_TABLE:Ethernet0) and STATE_DB               │
+│ b) Sets the host interface oper status to down via SAI                                   │
 └──────────────────────────────────────────────┬───────────────────────────────────────────┘
                                                │
                                                v
 ┌──────────────────────────────────────────────────────────────────────────────────────────┐
-│ Step 5: syncd updates the kernel interface                                               │
+│ Step 5: The kernel netdev goes oper-down                                                 │
 │                                                                                          │
-│ syncd sets the kernel interface down: ip link set Ethernet0 down                         │
+│ syncd applies the host-interface attribute through the vendor SAI, which drops carrier   │
+│ on the Ethernet0 netdev. Its oper state goes down; its admin state is untouched.         │
 └──────────────────────────────────────────────┬───────────────────────────────────────────┘
                                                │
                                                v
 ┌──────────────────────────────────────────────────────────────────────────────────────────┐
-│ Step 6: Kernel broadcasts netlink IF_DOWN                                                │
+│ Step 6: Kernel broadcasts a netlink link-down event                                      │
 │                                                                                          │
 │ Multiple daemons react in parallel:                                                      │
 │ → neighsyncd: flushes neighbors on this interface                                        │
 │ → teamsyncd: updates LAG member state                                                    │
-│ → zebra (FRR): withdraws routes via this interface, sends BGP WITHDRAW to peers          │
+│ → zebra (FRR): removes routes via this interface and notifies bgpd                       │
+│ → bgpd (FRR): sends BGP WITHDRAW to peers for routes that are no longer reachable        │
 │ → lldpmgrd: disables LLDP on this port                                                   │
 └──────────────────────────────────────────────┬───────────────────────────────────────────┘
                                                │
@@ -154,6 +156,7 @@ When a physical link goes down (cable unplugged, remote end failure):
 │                                                                                          │
 │ → Reads PORT table from CONFIG_DB (port lanes, speeds, aliases)                          │
 │ → Publishes port info to APPL_DB: PORT_TABLE:Ethernet0, Ethernet4, ...                   │
+│ → Sets PortConfigDone in APPL_DB once every port is published                            │
 │ → Subscribes to netlink for interface events                                             │
 └──────────────────────────────────────────────┬───────────────────────────────────────────┘
                                                │
@@ -161,30 +164,33 @@ When a physical link goes down (cable unplugged, remote end failure):
 ┌──────────────────────────────────────────────────────────────────────────────────────────┐
 │ Step 4: orchagent initializes ports in hardware                                          │
 │                                                                                          │
-│ → Receives APPL_DB events                                                                │
-│ → Waits until portsyncd signals "all ports parsed"                                       │
-│ → Calls sai_port_api->create_port() for each port                                        │
+│ → Fetches the ports SAI pre-created during create_switch (SAI_SWITCH_ATTR_PORT_LIST)     │
+│ → Waits for portsyncd's PortConfigDone in APPL_DB                                        │
+│ → Configures each port (speed, FEC, MTU, ...) with sai_port_api->set_port_attribute()    │
 └──────────────────────────────────────────────┬───────────────────────────────────────────┘
                                                │
                                                v
 ┌──────────────────────────────────────────────────────────────────────────────────────────┐
-│ Step 5: syncd creates ports and host interfaces                                          │
+│ Step 5: PortsOrch creates host interfaces                                                │
 │                                                                                          │
-│ syncd creates ports in the ASIC and creates kernel host-interfaces for each port         │
+│ PortsOrch (in orchagent) calls sai_hostif_api->create_hostif() for each port; syncd      │
+│ passes the call to the vendor SAI, which creates the kernel netdev (e.g., Ethernet0)     │
 └──────────────────────────────────────────────┬───────────────────────────────────────────┘
                                                │
                                                v
 ┌──────────────────────────────────────────────────────────────────────────────────────────┐
 │ Step 6: Kernel generates netlink events                                                  │
 │                                                                                          │
-│ New interfaces appear in the kernel; portsyncd receives netlink confirmations            │
+│ New interfaces appear in the kernel; portsyncd receives an RTM_NEWLINK for each one      │
+│ and writes PORT_TABLE|EthernetX → { "state": "ok" } to STATE_DB as each netdev appears   │
 └──────────────────────────────────────────────┬───────────────────────────────────────────┘
                                                │
                                                v
 ┌──────────────────────────────────────────────────────────────────────────────────────────┐
-│ Step 7: portsyncd marks initialization complete                                          │
+│ Step 7: portsyncd signals PortInitDone                                                   │
 │                                                                                          │
-│ After all ports confirmed, writes PORT_TABLE|EthernetX → { "state": "ok" } to STATE_DB   │
+│ Once every port has a netdev, portsyncd writes PortInitDone to APPL_DB; PortsOrch then   │
+│ marks all ports ready, unblocking the Orchs that depend on them                          │
 └──────────────────────────────────────────────┬───────────────────────────────────────────┘
                                                │
                                                v
@@ -226,7 +232,7 @@ admin@sonic:~$ config vlan member add 100 Ethernet4 --untagged
                                                │
                                                v
 ┌──────────────────────────────────────────────────────────────────────────────────────────┐
-│ Step 3: orchagent (VlanOrch) processes APPL_DB events                                    │
+│ Step 3: orchagent (PortsOrch) processes APPL_DB events                                   │
 │                                                                                          │
 │ → Creates SAI VLAN object                                                                │
 │ → Creates SAI VLAN member (port + VLAN association)                                      │
@@ -310,8 +316,8 @@ Knowing these flows helps you pinpoint exactly where things break:
 # Check if entries are pending in APPL_DB (orchagent not processing)
 sonic-db-cli APPL_DB KEYS '_*'
 
-# Check ASIC_DB queue (syncd not processing)
-sonic-db-cli ASIC_DB KEYS '_*'
+# Check ASIC_DB queue length (syncd not processing)
+sonic-db-cli ASIC_DB LLEN ASIC_STATE_KEY_VALUE_OP_QUEUE
 
 # Check port initialization state
 sonic-db-cli STATE_DB HGETALL "PORT_TABLE|Ethernet0"

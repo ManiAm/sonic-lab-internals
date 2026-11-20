@@ -15,7 +15,7 @@ These Orchs handle the objects that every packet depends on — ports, L2/L3 for
 | `NeighOrch` | APPL_DB | NEIGH_TABLE | ARP/NDP neighbors, adjacencies |
 | `RouteOrch` | APPL_DB | ROUTE_TABLE, LABEL_ROUTE_TABLE | IPv4/IPv6 routes, MPLS label routes, ECMP |
 | `FdbOrch`   | APPL_DB | FDB_TABLE, VXLAN_FDB_TABLE, MCLAG_FDB_TABLE | MAC forwarding database |
-| `NhgOrch`   | APPL_DB | NEXTHOP_GROUP_TABLE | Next-hop groups (ECMP) |
+| `NhgOrch`   | APPL_DB | NEXTHOP_GROUP_TABLE | Explicitly defined next-hop groups (route-derived ECMP groups are created by `RouteOrch`) |
 | `VRFOrch`   | APPL_DB, STATE_DB | VRF_TABLE, VRF_OBJECT_TABLE | VRF lifecycle and object tracking |
 
 ## Policy, QoS & Buffers
@@ -75,7 +75,7 @@ These Orchs track resource usage, protocol health, and mirror traffic for analys
 
 ## Specialized Next-Hop Groups
 
-> The primary `NhgOrch` (standard ECMP) is listed under [Core Data Plane](#core-data-plane). The Orchs below handle specialized next-hop group variants.
+> Standard ECMP groups for routes are created by `RouteOrch`, and explicitly defined groups by `NhgOrch`; both are listed under [Core Data Plane](#core-data-plane). The Orchs below handle specialized next-hop group variants.
 
 | Orch Class | DB | Tables | What It Handles |
 |---|---|---|---|
@@ -114,7 +114,7 @@ These Orchs track resource usage, protocol health, and mirror traffic for analys
 | Orch Class | DB | Tables | What It Handles |
 |---|---|---|---|
 | `FabricPortsOrch` | APPL_DB | FABRIC_PORT_TABLE, FABRIC_MONITOR_TABLE | Fabric port monitoring (VOQ chassis) |
-| `DTelOrch` | CONFIG_DB | DTEL, DTEL_REPORT_SESSION, DTEL_INT_SESSION, DTEL_QUEUE_REPORT, DTEL_EVENT | Dataplane telemetry (Memory only) |
+| `DTelOrch` | CONFIG_DB | DTEL, DTEL_REPORT_SESSION, DTEL_INT_SESSION, DTEL_QUEUE_REPORT, DTEL_EVENT | Dataplane telemetry (only on platforms that support it, e.g. Barefoot/Tofino) |
 | `HFTelOrch` | CONFIG_DB, STATE_DB | HIGH_FREQUENCY_TELEMETRY_PROFILE, HIGH_FREQUENCY_TELEMETRY_GROUP | High-frequency telemetry |
 | `P4Orch` | APPL_DB | P4RT_TABLE | P4Runtime programmable pipeline |
 | `DashEniFwdOrch` | CONFIG_DB, APPL_DB | DASH_ENI_FORWARD_TABLE | DASH ENI forwarding (SmartSwitch only) |

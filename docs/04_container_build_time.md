@@ -62,7 +62,7 @@ What each shared layer contributes:
 |-------|-------------|
 | **docker-base-trixie** | Minimal Debian plus the tooling every SONiC container needs: Python 3, `rsyslog` (with the RELP module for log forwarding), `supervisord` and its dependent-startup plugin, `redis-tools`, and common shared libraries |
 | **docker-config-engine-trixie** | Everything a container needs to talk to SONiC's databases: the `swsscommon` library (C++ and Python bindings for Redis), `sonic-db-cli`, the YANG model libraries, and the config engine `sonic-cfggen`, which lets a container generate its own configuration files from Redis at startup |
-| **docker-swss-layer-trixie** | The `swss` package — the compiled SWSS **daemons** themselves: `orchagent`, the manager daemons (`portmgrd`, `vlanmgrd`, `intfmgrd`, `buffmgrd`, and the rest), and the sync daemons (`portsyncd`, `neighsyncd`, `fpmsyncd`, `teamsyncd`, and others) |
+| **docker-swss-layer-trixie** | The `swss` package — the compiled SWSS **daemons** themselves: `orchagent`, the manager daemons (`portmgrd`, `vlanmgrd`, `intfmgrd`, `buffermgrd`, and the rest), and the sync daemons (`portsyncd`, `neighsyncd`, `fpmsyncd`, `teamsyncd`, and others) |
 
 A few entries in the tree deserve explanation:
 

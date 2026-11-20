@@ -115,10 +115,10 @@ All Orchs share this single thread — changes are applied sequentially, which a
 **The order of `m_orchList` matters.** If Orch A depends on objects created by Orch B, then B must appear before A in the list. For example, `PortsOrch` runs before `IntfsOrch` because you cannot create a router interface on a port that does not exist yet. The full dependency chain for L3 forwarding is:
 
 ```
-SwitchOrch → PortsOrch → IntfsOrch → NeighOrch → NhgOrch → RouteOrch
+SwitchOrch → PortsOrch → IntfsOrch → NeighOrch → RouteOrch
 ```
 
-Each Orch depends on SAI objects created by the ones to its left. If any link is missing, the downstream Orchs queue their work in `m_toSync` and retry on the next iteration (as described in [doTask()](#4-dotask--the-processing-loop) above).
+Each Orch depends on SAI objects created by the ones to its left. `RouteOrch` creates ECMP next-hop groups itself for multi-path routes in `ROUTE_TABLE`; `NhgOrch` only handles groups that are explicitly defined in `NEXTHOP_GROUP_TABLE` (see [Load Balancing](24_load_balancing.md)). If any link is missing, the downstream Orchs queue their work in `m_toSync` and retry on the next iteration (as described in [doTask()](#4-dotask--the-processing-loop) above).
 
 
 ## Worked Example: Two Orchs
@@ -426,9 +426,9 @@ A stock SONiC start passes `-b 1024` and omits `-k`, so a full pop of 1,024 rout
 
 Raising `-b` above the current `-k` does not enlarge each SAI call. It produces more of them per `doTask()`. Raising `-k` (for example `-k 65536`) raises the cap, up to whatever limit the vendor SAI accepts.
 
-## The Notification Thread
+## SAI Notifications
 
-Orchagent has a **dedicated notification thread** (separate from the main select loop) that handles asynchronous notifications from syncd:
+Besides database changes, orchagent also receives **asynchronous notifications** from syncd:
 
 | Event              | Description |
 |--------------------|-------------|
@@ -437,16 +437,16 @@ Orchagent has a **dedicated notification thread** (separate from the main select
 | Queue PFC deadlock | PFC watchdog detection |
 | BFD session state  | BFD up/down transition |
 
-These arrive via [NotificationConsumer](10_ipc_mechanisms.md#pattern-2-notificationconsumer--notificationproducer) and are processed in a separate thread to avoid blocking the main orchestration loop.
+These arrive via [NotificationConsumer](10_ipc_mechanisms.md#pattern-2-notificationconsumer--notificationproducer). Orchagent does not use a separate thread for them: the relevant Orch (for example, `PortsOrch` for port state or `FdbOrch` for FDB events) wraps a `NotificationConsumer` in a `Notifier` executor and registers it with the main select loop, so notifications are handled in the same single thread as database changes. The separate notification-processing thread lives on the syncd side.
 
 ```
-orchagent notification thread consumes the event
+orchagent main select loop (Notifier executor in the owning Orch) consumes the event
     ^
     │
 NotificationProducer → publishes to ASIC_DB notification channel
     ^
     │
-syncd notification handler
+syncd notification-processing thread
     ^
     │
 Vendor SDK fires callback into syncd
@@ -482,7 +482,7 @@ CONFIG_DB                                     COUNTERS_DB
 
 2. **Polling — two counters, two sources.** The two columns in CRM output come from different places:
 
-    - **Available count** — read from the ASIC via standard SAI switch attributes (e.g., `SAI_SWITCH_ATTR_AVAILABLE_IPV4_ROUTE_ENTRY`). Every vendor SAI must implement these; the vendor library queries actual hardware table occupancy. These are lightweight, read-only queries that do not interfere with forwarding.
+    - **Available count** — read from the ASIC through SAI: for some resources via standard SAI switch attributes (e.g., `SAI_SWITCH_ATTR_AVAILABLE_IPV4_ROUTE_ENTRY`), and for others via `sai_object_type_get_availability()`. The vendor library answers both from actual hardware table occupancy. These are lightweight, read-only queries that do not interfere with forwarding.
 
     - **Used count** — tracked in software by orchagent. Each Orch increments CRM's internal counter when it creates a SAI object and decrements it on removal. SAI defines `AVAILABLE` attributes but not `USED` attributes, because some ASIC-internal entries (default routes, SDK-created adjacencies) would skew the count. Software tracking keeps it consistent with what orchagent actually programmed.
 
@@ -531,7 +531,7 @@ CRM answers a question that no other SONiC component does: **how full is the ASI
 
 - **Capacity planning** — detecting when you are approaching table limits before entries start being dropped.
 
-- **Benchmarking** — the [BGP route-download benchmark](../benchmark/README.md) uses CRM's IPv4 route counter as the hardware-verified measurement source, polling it twice per second to track programming progress in real time.
+- **Benchmarking** — the [BGP route-download benchmark](../benchmark/README.md) uses CRM's IPv4 route counter as the hardware-verified measurement source, polling it periodically to track programming progress; see [The BGP Route-Download Benchmark](23_benchmark.md).
 
 - **Troubleshooting** — confirming that routes visible in software databases are actually present in hardware.
 

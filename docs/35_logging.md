@@ -339,8 +339,8 @@ grep SAI_OBJECT_TYPE_ROUTE_ENTRY /var/log/swss/sairedis.rec
 # Find all failed operations (non-SUCCESS status):
 grep 'SAI_STATUS_' /var/log/swss/sairedis.rec | grep -v SUCCESS
 
-# Find bulk operations (uppercase codes):
-grep '^.*|[CRSG]|' /var/log/swss/sairedis.rec
+# Find bulk operations (bulk create, remove, set, get):
+grep '^.*|[CRSB]|' /var/log/swss/sairedis.rec
 
 # Count operations by type:
 awk -F'|' '{print $2}' /var/log/swss/sairedis.rec | sort | uniq -c | sort -rn

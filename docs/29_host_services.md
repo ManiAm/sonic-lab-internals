@@ -37,7 +37,7 @@ Several one-shot services run at boot to configure the host environment before o
 | `rsyslog-config` | Configures remote syslog forwarding destinations. |
 | `logrotate-config` | Configures log rotation to prevent disk exhaustion. |
 
-On a `config reload`, many of these are re-triggered as part of the service restart sequence (see [Config Reload](31_config_reload.md)).
+On a `config reload`, many of these are re-triggered after the new configuration is loaded into CONFIG_DB and before `sonic.target` is restarted (see [Config Reload](31_config_reload.md)).
 
 
 

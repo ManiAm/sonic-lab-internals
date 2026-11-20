@@ -154,7 +154,7 @@ b5811ac01561   docker-sonic-gnmi:latest             gnmi
 
 What this output shows:
 
-- **The operating system is Debian.** This switch runs Debian 12 (Bookworm) with a Linux 6.1 kernel.
+- **The operating system is Debian.** This example was captured on a SONiC image based on Debian 12 (Bookworm) with a Linux 6.1 kernel. Current SONiC images are built on Debian 13 (Trixie).
 
 - **SONiC's configuration lives in `/etc/sonic/`.** The most important file is `config_db.json`, the main switch configuration. Other files include `minigraph.xml` (an older XML format that describes the switch's role and network topology), `frr/` (routing configuration), and files used during reboots and service startup.
 
@@ -203,7 +203,8 @@ SONiC moves to each new Debian stable release, usually within a year or two of i
 | 2018–2020          | Debian 9       | Stretch  |
 | 2020–2021          | Debian 10      | Buster   |
 | 2021–2023          | Debian 11      | Bullseye |
-| 2023 onward        | Debian 12      | Bookworm |
+| 2023–2025          | Debian 12      | Bookworm |
+| 2025 onward        | Debian 13      | Trixie   |
 
 ## Other Open Network Operating Systems
 

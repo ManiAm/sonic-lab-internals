@@ -54,8 +54,10 @@ device/
 Each switch model gets exactly one **platform folder**, named with its **ONIE platform string**:
 
 ```
-<cpu-arch>-<vendor>_<model>-r<hardware-revision>
+<cpu-arch>-<vendor>_<model>[-r<hardware-revision>]
 ```
+
+The `-r<hardware-revision>` suffix is vendor-specific: most vendors include it, but some (such as Arista in the table below) omit it.
 
 Real examples:
 
@@ -165,7 +167,7 @@ Ethernet8  8,9,10,11,12,13,14,15  Et2/1   2        400000
 
 ## From Files to a Running Switch — Who Reads What, When
 
-The device folder files are **seeds**, not the runtime state. They are never read at run time — the running switch gets its configuration from CONFIG_DB (a Redis database). The question is: how do the seeds become CONFIG_DB entries?
+The device folder files are **seeds**, not the runtime state. They are mainly read at boot and initialization time — the running switch gets its configuration from CONFIG_DB (a Redis database). There are exceptions: syncd loads the ASIC files named by `sai.profile` (see below), and PMON reads platform files such as `sensors.conf`, `pmon_daemon_control.json`, and `thermal_policy.json` when its daemons start ([The PMON Container](27_pmon_container.md)). The question is: how do the seeds become CONFIG_DB entries?
 
 The [Database Container startup sequence](07_database_container.md#startup-sequence) covers three cold-boot paths. Two of them never touch the seed files at all:
 
@@ -190,7 +192,7 @@ sonic-db-cli CONFIG_DB HGETALL "PORT|Ethernet0"           # lanes/speed/alias of
 
 When you want a completely different port layout that the vendor has already defined (e.g. switching a box from an all-400G spine layout to a mixed 100G/400G leaf layout), you switch the active HwSKU. This replaces the *entire* port inventory: you regenerate CONFIG_DB for the target SKU and cold reboot.
 
-> **Note:** If you only need to split or combine a few individual ports without changing the overall layout, see [Dynamic Port Breakout](#dynamic-port-breakout) instead.
+> **Note:** If you only need to split or combine a few individual ports without changing the overall layout, see [Dynamic Port Breakout](#dynamic-port-breakout-dpb) instead.
 
 ### Why You Cannot Just Edit the SKU Field
 

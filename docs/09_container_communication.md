@@ -14,7 +14,7 @@ This chapter covers all three paths, then explains `swsscommon`, the shared libr
 
 A **Unix domain socket** is a special file on the local filesystem that two processes can open to exchange data, similar to a network connection but without any network overhead. Both sides must be on the same machine.
 
-Within a single container, daemons sometimes need to talk directly to each other. They do this through Unix domain sockets. For example, inside the BGP container, FRR's `zebra` process talks to `fpmsyncd` through a Unix domain socket. Both daemons live in the same container, so there is no need to go through Redis — a local socket is simpler and faster. This pattern appears wherever multiple daemons in the same container need to coordinate.
+Within a single container, daemons sometimes need to talk directly to each other. They do this through Unix domain sockets. For example, inside the BGP container, FRR daemons such as `bgpd` talk to `zebra` through zebra's zserv Unix domain socket (`zserv.api`). Both daemons live in the same container, so there is no need to go through Redis — a local socket is simpler and faster. This pattern appears wherever multiple daemons in the same container need to coordinate.
 
 Understanding Unix domain sockets now matters because the next section — Redis communication between containers — relies on the same mechanism to connect containers to the Redis server.
 
@@ -39,33 +39,33 @@ Each container has its own isolated filesystem, so it cannot directly see the Re
 
 Here is how it works step by step:
 
-1. The database container creates Unix domain sockets (the same kind of special files described in Section 1) at `/var/run/redis/sonic-db/` on the host filesystem.
+1. The database container creates Unix domain sockets (the same kind of special files described in Section 1) at `/var/run/redis/` on the host filesystem. The default instance's socket is `/var/run/redis/redis.sock`.
 2. When every other container is started, Docker mounts that same host directory into the container using the `-v` flag.
 3. Each container now sees the same socket files at the same path, so any process in any container can open these socket files to read from and write to Redis — even though the Redis server is running in a different container.
 
 ```
 Host filesystem
-/var/run/redis/sonic-db/
-├── redis.sock            ← created by the database container
-├── redis1.sock
-├── redis2.sock
-├── redis3.sock
-└── database_config.json
+/var/run/redis/
+├── redis.sock            ← created by the database container (default instance)
+├── redis1.sock           ← only in multi-instance layouts
+└── sonic-db/
+    └── database_config.json
 
 mounted into every container via:
-docker create -v /var/run/redis/sonic-db/:/var/run/redis/sonic-db/ ...
+docker create -v /var/run/redis:/var/run/redis:rw ...
 ```
 
 ### Unix Sockets vs. TCP
 
 Unix domain sockets are the default connection method and are preferred for single-box deployments — access is controlled through file permissions (no network-level ACLs needed), and they have slightly lower latency than TCP loopback.
 
-SONiC also supports **TCP connections** to Redis. This is used in **modular chassis systems**, where the database container runs on a supervisor card and line cards connect to it over the network. In that setup, Unix sockets cannot work because the line cards are on separate machines and do not share a filesystem with the supervisor.
+SONiC also supports **TCP connections** to Redis. Every instance listens on `127.0.0.1:<port>` as well as on its Unix socket, so a process on the same host can connect over TCP loopback instead. TCP is also what makes **modular chassis systems** work: each line card runs its own database container for its local databases, but the chassis databases (CHASSIS_APP_DB and CHASSIS_STATE_DB) live on the supervisor card, and line cards reach them over the chassis internal network. Unix sockets cannot work for that case because the line cards are on separate machines and do not share a filesystem with the supervisor.
 
-| Method          | How                                     | Default? | Use Case |
-|-----------------|-----------------------------------------|----------|----------|
-| **Unix Socket** | `/var/run/redis/sonic-db/redis<N>.sock` | Yes      | Same-host communication — faster, more secure |
-| **TCP**         | `127.0.0.1:<port>`                      | No       | Cross-host communication (modular chassis systems) |
+| Method             | How                                               | Default? | Use Case |
+|--------------------|---------------------------------------------------|----------|----------|
+| **Unix Socket**    | `/var/run/redis/redis.sock`                       | Yes      | Same-host communication — faster, more secure |
+| **TCP (loopback)** | `127.0.0.1:<port>`                                | No       | Same-host communication over TCP |
+| **TCP (chassis)**  | Supervisor's address on the chassis internal network | No    | Line cards reaching the chassis databases on the supervisor |
 
 ## 3. The Linux Kernel — Container-to-System Communication
 
@@ -85,7 +85,7 @@ Unlike typical Docker deployments where each container has its own isolated netw
 
 | Path               | Between                          | Example                                      |
 |--------------------|----------------------------------|----------------------------------------------|
-| Unix domain socket | Daemon ↔ Daemon (same container) | zebra ↔ fpmsyncd (both inside the BGP container) |
+| Unix domain socket | Daemon ↔ Daemon (same container) | bgpd ↔ zebra over `zserv.api` (both inside the BGP container) |
 | Redis              | Container ↔ Container            | BGP writes routes to APPL_DB, orchagent (in SWSS) reads them |
 | Netlink            | Kernel → Container               | Kernel notifies portsyncd (in SWSS) that a link went down |
 | /sys filesystem    | Container → Hardware             | PMON reads temperature sensors via sysfs |

@@ -32,7 +32,7 @@ Beyond the general advantages, SONiC has specific reasons for choosing a contain
 
 - **Uniform lifecycle management.** Every container follows the same pattern: a Dockerfile defines its contents, an entrypoint script handles initialization, and supervisord (a lightweight process manager) manages the processes inside. Adding a new feature means adding a new container that follows the same recipe.
 
-- **Build-time feature selection.** SONiC can include or exclude containers from the build image. A minimal spine switch might ship with only the database, swss, syncd, and BGP containers, while a full-featured leaf switch might include all 15+ containers. At runtime, individual containers can be enabled or disabled via the FEATURE table.
+- **Build-time feature selection.** SONiC can include or exclude containers from the build image. A minimal spine switch might ship with only the database, swss, syncd, and BGP containers, while a full-featured leaf switch might include around 30 containers. At runtime, individual containers can be enabled or disabled via the FEATURE table.
 
 - **Kubernetes-ready future.** The SONiC community has explored using Kubernetes to orchestrate container updates across a fleet of switches — for example, rolling out a new telemetry container to thousands of switches without rebooting any of them. This work is experimental but the container-based architecture makes it feasible.
 
@@ -70,6 +70,7 @@ These containers provide specific networking functions — routing, link aggrega
 | **stp**         | Spanning Tree Protocol — prevents Layer 2 loops |
 | **iccpd**       | Inter-Chassis Communication Protocol — enables MC-LAG (multi-chassis link aggregation) |
 | **mux**         | Dual-ToR multiplexer (enabled only in DualToR high-availability deployments) |
+| **gbsyncd**     | Gearbox syncd — the syncd for external gearbox PHYs (devices that sit between the switch ASIC and the front-panel ports); runs only on platforms that have them |
 
 ### Monitoring and Management Containers
 
@@ -91,12 +92,11 @@ These containers provide visibility and operator interfaces. They mostly read fr
 
 ### SmartSwitch / DPU Containers
 
-These containers are specific to SmartSwitch and DPU (Data Processing Unit) deployments. They are conditionally included based on platform type.
+Containers in this group are specific to SmartSwitch and DPU (Data Processing Unit) deployments and are included only on those platforms.
 
 | Container    | Role |
 |--------------|------|
 | **dash-ha**  | DASH High Availability — manages failover and state synchronization for SmartSwitch DPU pipelines |
-| **gbsyncd**  | Gearbox syncd — synchronizes state to gearbox PHY ASICs (external PHY devices that sit between the switch ASIC and the front-panel ports) |
 
 
 ## Build Time vs. Run Time

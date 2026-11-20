@@ -2,7 +2,7 @@
 
 We introduced all of SONiC's logical databases in a [single reference table](07_database_container.md#logical-databases). This document takes the **core** databases from that list — the ones present on every SONiC system and central to the data pipeline — and explains each one in depth: what it stores, who writes to it, who reads from it, and how data flows between them.
 
-The core databases form a pipeline that transforms user intent into hardware behavior. The [Architecture Overview](02_architecture_overview.md#the-orchestration-pipeline) illustrates this visually — in short: CONFIG_DB (what the user wants) → APPL_DB (what the control plane computed) → ASIC_DB (what the hardware should do).
+The core databases form a pipeline that transforms user intent into hardware behavior. The [Architecture Overview](02_architecture_overview.md#the-programming-pipeline) illustrates this visually — in short: CONFIG_DB (what the user wants) → APPL_DB (what the control plane computed) → ASIC_DB (what the hardware should do).
 
 STATE_DB and COUNTERS_DB sit outside this downward pipeline but form the **upward flow** — feedback from the hardware back to the control plane (see [Upward State Flow](02_architecture_overview.md#upward-state-flow)):
 
@@ -113,7 +113,7 @@ ASIC_STATE:SAI_OBJECT_TYPE_PORT:oid:0x1000000000003
 PORT_TABLE|Ethernet0               → { "state": "ok" }
 TRANSCEIVER_INFO|Ethernet0         → { "type": "QSFP28", "vendor": "...", "serial": "..." }
 TRANSCEIVER_DOM_SENSOR|Ethernet0   → { "temperature": "35.5", "rx_power": "-1.2" }
-FAN_INFO|fan1                      → { "speed": "6000", "status": "OK" }
+FAN_INFO|fan1                      → { "speed": "62", "status": "OK" }
 ```
 
 **Key characteristics**:

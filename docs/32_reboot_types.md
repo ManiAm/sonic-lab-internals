@@ -12,7 +12,7 @@ SONiC can restart a switch in five ways. They differ in two things: how much of 
 | **Redis** | Empty, then `config_db.json` | Empty, then `config_db.json` | Restored from `dump.rdb` | Restored from `dump.rdb` | Restored from `dump.rdb` |
 | **MAC / neighbors** | Relearned | Relearned | Saved, then restored | Stay in the ASIC | Stay in the ASIC |
 | **BGP** | Sessions drop | Sessions drop | Graceful Restart | Graceful Restart | Graceful Restart |
-| **Data plane** | Minutes | Minutes, minus POST | Target under 30 seconds | Target sub-second or none | Target sub-second or none |
+| **Data plane** | Minutes | Minutes, minus POST | Target under 30 seconds (typically around 25 s) | Target sub-second or none | Target sub-second or none |
 | **Control plane** | Minutes | Minutes, minus POST | Target under 90 seconds | Target under 90 seconds | Target under 90 seconds |
 | **Where it runs** | Every platform | Every platform | General | SAI warm-boot support required | Cisco 8000 and Marvell Teralynx |
 
@@ -264,7 +264,7 @@ The result is the same as cold reboot — a completely clean start. The only adv
 
 ## Fast Reboot
 
-Fast reboot resets the ASIC and then restores the saved state, so the switch does not have to relearn the network from scratch. The data-plane target is under 30 seconds. The control-plane target is under 90 seconds, inside the Graceful Restart window. Forwarding stops while the ASIC is reset and resumes when the saved entries are programmed back.
+Fast reboot resets the ASIC and then restores the saved state, so the switch does not have to relearn the network from scratch. The data-plane target is under 30 seconds (typically around 25 seconds). The control-plane target is under 90 seconds, inside the Graceful Restart window. Forwarding stops while the ASIC is reset and resumes when the saved entries are programmed back.
 
 ```bash
 sudo fast-reboot
@@ -415,7 +415,8 @@ Express reboot is a hybrid of warm and fast. Like warm reboot, the ASIC is **not
 |---|---|
 | First boot after installing an image | Cold |
 | The switch is in an unknown or failed state | Cold |
-| ASIC SDK upgrade, or a downgrade | Cold |
+| ASIC SDK upgrade (warm reboot is not supported across SDK versions) | Cold or Fast |
+| Downgrade to an older image | Cold |
 | A clean restart, and skipping firmware POST is enough | Soft |
 | Planned upgrade, short data-plane loss is acceptable | Fast |
 | The platform cannot warm-reboot | Fast |

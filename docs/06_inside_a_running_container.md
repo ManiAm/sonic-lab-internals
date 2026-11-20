@@ -6,7 +6,7 @@ This document covers what happens inside a SONiC container once Docker starts it
 
 Once Docker starts the container, the entrypoint from the Dockerfile begins executing. Everything from here happens inside the container's isolated environment.
 
-The entrypoint (`/usr/bin/docker-init.sh` for most containers) performs one-time setup and then hands off. Its central job is **rendering this container's configuration from the live database**:
+The entrypoint (`/usr/bin/docker-init.sh` for most containers; the exact script name varies by container, for example pmon uses `docker_init.sh`) performs one-time setup and then hands off. Its central job is **rendering this container's configuration from the live database**:
 
 ```bash
 sonic-cfggen -d \
@@ -172,7 +172,7 @@ systemd starts the unit (swss.service)
 | Where | Component | Responsibility |
 |-------|-----------|----------------|
 | Host | systemd | *When* to start and stop; dependency ordering; restart policy and rate limiting |
-| Host | `featured` | Applies FEATURE table settings by masking units and writing restart drop-ins |
+| Host | `featured` | Applies FEATURE table settings by masking units and writing restart drop-ins; starts `delayed` features once `PortInitDone` appears in APPL_DB |
 | Host | Service script (`/usr/local/bin/`) | SONiC-specific preconditions: wait for Redis, clean stale state, manage peer containers, handle warm/fast boot |
 | Host | Control script (`/usr/bin/`) | *How* to run the container: create versus start, mounts, network mode, environment |
 | Container | Entrypoint script | Generates the container's runtime configuration from Redis |

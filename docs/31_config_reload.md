@@ -47,9 +47,9 @@ The following is the complete sequence from the moment the user runs `config rel
     - Or: user-specified file                                                           │
                                                                                         │
  6. Host services are reconfigured                                                      │
-    - hostname-config, interfaces-config, ntp-config, rsyslog-config                    │
+    - hostname-config, interfaces-config, NTP (chrony), rsyslog-config                  │
                                                                                         │
- 7. systemctl start sonic.target                                                       ─┘
+ 7. systemctl restart sonic.target                                                     ─┘
     - Systemd starts all SONiC service containers in dependency order.
 
  8. Manager daemons inside the containers read CONFIG_DB, configure the
@@ -66,7 +66,7 @@ The following is the complete sequence from the moment the user runs `config rel
     the control plane has re-learned all routes.
 ```
 
-> **Why separate stop and start?** Steps 3 and 7 are intentionally a `stop` then a `start` — not a single `restart`. The CONFIG_DB flush and reload (steps 4–6) must happen while no containers are running but Redis is still available to receive the new data. Keeping the `database` container outside `sonic.target` (see [Container Run Time](05_container_run_time.md)) is what makes this possible.
+> **Why does Redis stay up?** The CONFIG_DB flush and reload (steps 4–6) must happen while the SONiC service containers are stopped but Redis is still available to receive the new data. Keeping the `database` container outside `sonic.target` (see [Container Run Time](05_container_run_time.md)) is what makes this possible: stopping and restarting `sonic.target` cycles every other container while the database keeps running.
 
 
 ### CONFIG_DB Flush (Step 4)
@@ -101,31 +101,35 @@ Before the SONiC containers restart, the host itself must reflect the new config
 |---------------------|------------------------------------------------------------------------|
 | `hostname-config`   | Sets the system hostname from `DEVICE_METADATA\|localhost\|hostname`   |
 | `interfaces-config` | Configures the management interface (eth0) from `MGMT_INTERFACE` table |
-| `ntp-config`        | Updates `/etc/ntp.conf` from `NTP_SERVER` table                        |
+| `ntp-config`        | Regenerates the NTP configuration (chrony in current images) from the `NTP_SERVER` table |
 | `rsyslog-config`    | Updates syslog forwarding rules from `SYSLOG_SERVER` table             |
 
 
 ## Delayed Service Start
 
-In newer SONiC versions, not all services start at the same time. This is an optimization to reduce CPU contention: if every service tries to initialize simultaneously, they compete for CPU and some may time out before they finish.
+When `sonic.target` restarts, not all services start at the same time. This is an optimization to reduce CPU contention: if every service tries to initialize simultaneously, they compete for CPU and some may time out before they finish. The same delayed start applies at every boot, not only on a config reload.
 
 ```
 Phase 1 — Immediate start:
-    database → syncd → swss → bgp → teamd
-    (critical forwarding and routing services)
+    swss → syncd (started as swss's peer), then bgp, teamd
+    (critical forwarding and routing services; database is already running)
 
 Phase 2 — Delayed until PortInitDone:
-    snmp, lldp, telemetry, dhcp_relay
-    (non-critical monitoring and helper services)
+    features marked delayed, typically snmp, lldp, telemetry/gnmi, mgmt-framework
+    (non-critical monitoring and management services)
 ```
+
+Which features are delayed is controlled by the `delayed` field of the FEATURE table in CONFIG_DB. Check `show feature config` on your image rather than relying on a fixed list.
 
 How the handoff works:
 
 1. `portsyncd` (inside the SWSS container) detects when all front-panel ports have been initialized in the Linux kernel.
 2. `portsyncd` writes a `PortInitDone` flag to APPL_DB.
-3. `hostcfgd` (a host-level daemon) subscribes to APPL_DB and watches for `PortInitDone`.
-4. When the flag arrives, `hostcfgd` starts the Phase 2 services.
+3. `featured` (a host-level daemon) subscribes to APPL_DB and watches for `PortInitDone`.
+4. When the flag arrives, `featured` starts the Phase 2 services.
 5. A safety timeout ensures Phase 2 services start even if port initialization fails — they are never blocked indefinitely.
+
+Older SONiC images implemented the same delay with systemd `.timer` units instead of `featured`.
 
 
 ## Impact
@@ -151,8 +155,8 @@ How the handoff works:
 
 ## When NOT to Use Config Reload
 
-- **For routine changes** — use individual CLI commands or `config apply-patch` instead. These apply incrementally with no service disruption.
-- **When zero downtime is required** — config reload disrupts both the data plane and control plane. Use `config apply-patch` for hitless incremental changes.
+- **For routine changes** — use individual CLI commands or `config apply-patch` instead. These apply incrementally without restarting every container, although `config apply-patch` may restart the specific service that owns a changed table (see [Live Changes vs. Restart-Only Tables](30_configuration_management.md#live-changes-vs-restart-only-tables)).
+- **When zero downtime is required** — config reload disrupts both the data plane and control plane. Use `config apply-patch` for incremental changes; it does not cycle the whole system, but changes to some tables restart the associated service (for example rsyslog, dhcp_relay, chrony, gnmi, or telemetry).
 - **To restart a single container** — use `systemctl restart <service>` instead. Config reload restarts everything.
 - **When changes are already in CONFIG_DB** — if you modified CONFIG_DB through the CLI and just want to persist those changes, use `config save`, not `config reload`.
 

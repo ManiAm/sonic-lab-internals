@@ -126,7 +126,7 @@ When a packet arrives on Ethernet0, the ASIC compares it against all three rules
 
 The lowest-priority rule typically serves as a **catch-all** — a wildcard rule with no match fields that applies to any packet not matched by a higher-priority rule. The catch-all defines the table's default policy: `FORWARD` (permit everything not explicitly denied) or `DROP` (deny everything not explicitly permitted). In this example, RULE_1 at priority 1 forwards all traffic that the two drop rules above it do not match.
 
-> **Note:** If no rule matches at all — including no catch-all — the default behavior is platform-dependent. Most ASICs implicitly drop unmatched traffic within an ACL table, which is why an explicit catch-all is recommended.
+> **Note:** If no rule matches at all — including no catch-all — the packet is not dropped by the ACL table; it continues with normal forwarding. When deny-by-default behavior is wanted, tools such as `acl-loader` add an explicit lowest-priority default drop rule.
 
 ### Table Types
 
@@ -349,7 +349,7 @@ As shown in the evaluation walkthrough above, the ASIC compares a packet against
 
 **Practical implications for SONiC ACL operators:**
 
-- **TCAM is a finite, shared resource.** ACLs, LPM (Longest Prefix Match) routes, host routes, and some internal system rules all compete for the same TCAM banks. The partitioning between these features is typically fixed at boot based on the platform's SAI profile and cannot be changed at runtime.
+- **TCAM is a finite, shared resource.** ACLs and some internal system rules use TCAM. Host routes and MAC entries are normally stored in SRAM hash tables, while LPM (Longest Prefix Match) routes may use TCAM or algorithmic SRAM structures depending on the ASIC — so on some platforms ACLs also share TCAM with routes. The partitioning between these features is typically fixed at boot based on the platform's SAI profile and cannot be changed at runtime.
 
 - **Entry size varies by match key.** Every ACL rule consumes one or more TCAM entries. Rules with wider match keys consume more space — on some platforms, IPv6 rules take twice the TCAM entries of IPv4 rules because IPv6 addresses are 128 bits vs. IPv4's 32 bits.
 
